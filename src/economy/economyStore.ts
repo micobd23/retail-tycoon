@@ -63,6 +63,17 @@ export interface CustomerVoice {
   good: boolean;
 }
 
+// Tageseintrag für die Verlaufshistorie (max. 52 Tage = 1 Jahr).
+export interface DayRecord {
+  day: number;
+  revenue: number;
+  spoiledValue: number;
+  unitsSold: number;
+  demandedTotal: number;
+  satisfaction: number;
+  cash: number; // Kassenstand nach dem Tag
+}
+
 // Zusammenfassung eines abgeschlossenen Tages -> für den Vollbild-Recap.
 export interface DayRecap {
   day: number; // der abgeschlossene Tag
@@ -207,6 +218,10 @@ interface EconomyState {
   seasonEvent: SeasonEvent | null;
   // Lieferanten-Ausfall: supplierId → globaler Tag bis zu dem der Ausfall geht (inkl.).
   supplierOutage: Record<string, number>;
+  // Tagesverlauf (max. 52 Einträge = 1 Spieljahr), neueste Tage hinten.
+  history: DayRecord[];
+  // Kumulierte Gesamtnachfrage je Produkt (für Fill-Rate-Berechnung).
+  demandedByProduct: Record<string, number>;
 
   startGame: (id: GameModeId) => void;
   resetGame: () => void;
@@ -461,6 +476,8 @@ export const useEconomy = create<EconomyState>()(
       trendProductId: null,
       seasonEvent: null,
       supplierOutage: {},
+      history: [],
+      demandedByProduct: {},
 
       startGame: (id) => {
         const mode = MODES.find((m) => m.id === id);
@@ -485,6 +502,8 @@ export const useEconomy = create<EconomyState>()(
           trendProductId: rollTrendProduct("Frühling", 1),
           seasonEvent: makeSeasonEvent(1, "Frühling"),
           supplierOutage: {},
+          history: [],
+          demandedByProduct: {},
         });
 
         // Postfach frisch aufsetzen: Willkommensmail + die Start-Angebote.
@@ -525,6 +544,8 @@ export const useEconomy = create<EconomyState>()(
           trendProductId: null,
           seasonEvent: null,
           supplierOutage: {},
+          history: [],
+          demandedByProduct: {},
         });
       },
 
@@ -598,16 +619,17 @@ export const useEconomy = create<EconomyState>()(
 
       advanceDay: () => {
         const { batches, stats, cash, day, offers, upgrades, lastRevenue, satisfaction,
-          supplierMods, seasonEvent, supplierOutage } = get();
+          supplierMods, seasonEvent, supplierOutage, history, demandedByProduct } = get();
         const { season, seasonDay } = dayToCalendar(day);
         const newBatches: Record<string, Batch[]> = {};
         const newStats: Record<string, ProductStat> = { ...stats };
+        const newDemandedByProduct: Record<string, number> = { ...demandedByProduct };
         let revenue = 0;
         let spoiledValue = 0;
-        let unitsSold = 0; // verkaufte Stück gesamt (für den Recap)
-        let best: { name: string; qty: number } | null = null; // Tages-Bestseller
-        let demandedTotal = 0; // gesamte Nachfrage (auch unbediente)
-        const missedByProduct: Record<string, number> = {}; // verpasst je Produkt
+        let unitsSold = 0;
+        let best: { name: string; qty: number } | null = null;
+        let demandedTotal = 0;
+        const missedByProduct: Record<string, number> = {};
 
         for (const p of CATALOG) {
           let list = (batches[p.id] ?? []).map((b) => ({ ...b }));
@@ -618,6 +640,7 @@ export const useEconomy = create<EconomyState>()(
           const demand = effectiveSales(p, upgrades, satisfaction, season, seasonDay);
           const stock = list.reduce((s, b) => s + b.qty, 0);
           demandedTotal += demand;
+          newDemandedByProduct[p.id] = (newDemandedByProduct[p.id] ?? 0) + demand;
           if (demand > stock) missedByProduct[p.id] = demand - stock;
           let toSell = Math.min(demand, stock);
           for (const b of list) {
@@ -758,6 +781,18 @@ export const useEconomy = create<EconomyState>()(
         // --- Lieferanten-Ausfall ---------------------------------------------
         const newOutage = maybeSupplierOutage(supplierOutage, day + 1) ?? {};
 
+        // Tages-Datensatz für die Historie (max. 52 Einträge behalten).
+        const cashAfter = +(cash + revenue).toFixed(2);
+        const todayRecord: DayRecord = {
+          day,
+          revenue: +revenue.toFixed(2),
+          spoiledValue: +spoiledValue.toFixed(2),
+          unitsSold,
+          demandedTotal,
+          satisfaction: 0, // wird gleich mit newSat überschrieben
+          cash: cashAfter,
+        };
+
         // Zufriedenheit + Kundenstimmen aus dem Tag ableiten.
         const missedUnits = Object.values(missedByProduct).reduce((s, n) => s + n, 0);
         const { satisfaction: newSat, voices } = computeSatisfaction({
@@ -768,11 +803,16 @@ export const useEconomy = create<EconomyState>()(
           upgrades,
         });
 
+        const newHistory = [
+          ...history.slice(-51), // max. 52 Einträge (letzte 51 + heutiger)
+          { ...todayRecord, satisfaction: newSat },
+        ];
+
         set({
           batches: newBatches,
           stats: newStats,
           offers: newOffers,
-          cash: +(cash + revenue).toFixed(2),
+          cash: cashAfter,
           day: day + 1,
           lastRevenue: +revenue.toFixed(2),
           lastSpoiledValue: +spoiledValue.toFixed(2),
@@ -782,6 +822,8 @@ export const useEconomy = create<EconomyState>()(
           trendProductId: newTrend,
           seasonEvent: notifiedEvent,
           supplierOutage: newOutage,
+          history: newHistory,
+          demandedByProduct: newDemandedByProduct,
           recap: {
             day, // der Tag, der gerade abgeschlossen wurde
             revenue: +revenue.toFixed(2),
@@ -802,7 +844,7 @@ export const useEconomy = create<EconomyState>()(
     }),
     {
       name: "retail-tycoon-save",
-      version: 5,
+      version: 6,
       migrate: (raw) => {
         const s = (raw ?? {}) as Record<string, unknown>;
         return {
@@ -822,6 +864,8 @@ export const useEconomy = create<EconomyState>()(
           trendProductId: (s.trendProductId as string | null) ?? null,
           seasonEvent: (s.seasonEvent as SeasonEvent | null) ?? null,
           supplierOutage: (s.supplierOutage as Record<string, number>) ?? {},
+          history: (s.history as DayRecord[]) ?? [],
+          demandedByProduct: (s.demandedByProduct as Record<string, number>) ?? {},
           recap: null,
           recapOpen: false,
         };
@@ -843,6 +887,8 @@ export const useEconomy = create<EconomyState>()(
         trendProductId: s.trendProductId,
         seasonEvent: s.seasonEvent,
         supplierOutage: s.supplierOutage,
+        history: s.history,
+        demandedByProduct: s.demandedByProduct,
         recap: s.recap,
       }),
     },
