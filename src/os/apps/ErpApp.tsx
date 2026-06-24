@@ -20,6 +20,7 @@ import {
   supplierBaseEk,
   cheapestSupplier,
   dayToCalendar,
+  currentSeasonWave,
   type Category,
   type Product,
 } from "../../economy/catalog";
@@ -198,8 +199,12 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
   const offers = useEconomy((s) => s.offers);
   const upgrades = useEconomy((s) => s.upgrades);
   const lastMissed = useEconomy((s) => s.lastMissed);
+  const supplierMods = useEconomy((s) => s.supplierMods);
+  const trendProductId = useEconomy((s) => s.trendProductId);
+  const supplierOutage = useEconomy((s) => s.supplierOutage);
   const buy = useEconomy((s) => s.buy);
-  const { season } = dayToCalendar(day);
+  const { season, seasonDay } = dayToCalendar(day);
+  const wave = currentSeasonWave(seasonDay);
 
   const [filter, setFilter] = useState<Filter>("alle");
   const [qty, setQty] = useState<Record<string, number>>({});
@@ -220,13 +225,18 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
     setMsg(res.ok ? `✅ ${menge}× ${p.name} eingekauft.` : `⚠️ ${res.msg}`);
   };
 
-  // Welche Kategorien werden gezeigt? Bei "alle" alle (mit Überschriften),
-  // sonst nur die gewählte (ohne Überschrift).
+  // Lieferanten-Mod-Label (+15%, -10% etc.)
+  const modLabel = (supplierId: string) => {
+    const m = supplierMods[supplierId] ?? 1.0;
+    if (Math.abs(m - 1.0) < 0.005) return "";
+    const pct = Math.round((m - 1.0) * 100);
+    return pct > 0 ? `+${pct}%` : `${pct}%`;
+  };
+
   const shownCats = filter === "alle" ? CATEGORIES : [filter];
 
   return (
     <div className="erp-einkauf">
-      {/* Kategorie-Filter als Chips (bleiben über der scrollenden Tabelle) */}
       <div className="erp-chips">
         {FILTERS.map((f) => (
           <button
@@ -255,17 +265,18 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
         </thead>
         <tbody>
           {shownCats.map((cat) => {
-            // Saison-Specials außerhalb ihrer Saison ausblenden
-            const items = CATALOG.filter(
-              (p) => p.category === cat && (!p.onlyInSeason || p.onlyInSeason === season),
-            );
+            const items = CATALOG.filter((p) => {
+              if (p.category !== cat) return false;
+              // Saison-Specials außerhalb ihrer Saison ausblenden
+              if (p.onlyInSeason && p.onlyInSeason !== season) return false;
+              // Aktionswellen-Produkte: nur aktive Welle zeigen
+              if (p.seasonWave && p.seasonWave !== wave) return false;
+              return true;
+            });
             return [
-              // Überschrift nur in der "Alle"-Ansicht.
               filter === "alle" ? (
                 <tr key={"cat-" + cat} className="erp-cat-row">
-                  <td className="l" colSpan={8}>
-                    {cat}
-                  </td>
+                  <td className="l" colSpan={8}>{cat}</td>
                 </tr>
               ) : null,
               ...items.map((p) => {
@@ -273,7 +284,8 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                 const sup = getSupplier(p);
                 const offer = offers[p.id];
                 const offerRabatt = offer?.rabatt ?? 0;
-                const effBase = supplierBaseEk(p, sup) * (1 - offerRabatt);
+                const supMod = supplierMods[sup] ?? 1.0;
+                const effBase = supplierBaseEk(p, sup) * (1 - offerRabatt) * supMod;
                 const stueck = unitPrice(effBase, menge);
                 const mengenRabatt = rabattProzent(menge);
                 const gesamt = +(stueck * menge).toFixed(2);
@@ -282,15 +294,17 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                 const tooExpensive = gesamt > cash;
                 const tooFull = menge > frei;
                 const disabled = tooExpensive || tooFull || menge <= 0;
+                const isTrend = trendProductId === p.id;
                 const title = tooExpensive
                   ? "Nicht genug Geld"
                   : tooFull
                     ? `Kein Platz — nur ${frei} frei`
                     : `Gesamt ${euro(gesamt)}`;
                 return (
-                  <tr key={p.id}>
+                  <tr key={p.id} className={isTrend ? "erp-row-trend" : ""}>
                     <td className="l">
                       <span className="erp-name">{p.name}</span>
+                      {isTrend && <span className="erp-trend">🔥 Trend</span>}
                       <span
                         className={
                           "erp-badge " +
@@ -303,7 +317,7 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                       </span>
                       {p.onlyInSeason && (
                         <span className="erp-saison">
-                          {SEASON_EMOJI[p.onlyInSeason]} {p.onlyInSeason}-Special
+                          {SEASON_EMOJI[p.onlyInSeason]}{p.seasonWave ? ` Welle ${p.seasonWave}` : ` ${p.onlyInSeason}-Special`}
                         </span>
                       )}
                       {empfMenge(p, upgrades) && (
@@ -333,13 +347,31 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                           setSupplier((s) => ({ ...s, [p.id]: e.target.value }))
                         }
                       >
-                        {SUPPLIERS.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name} ·{" "}
-                            {euro(supplierBaseEk(p, s.id) * (1 - offerRabatt))}
-                          </option>
-                        ))}
+                        {SUPPLIERS.map((s) => {
+                          const outage = (supplierOutage[s.id] ?? 0) >= day;
+                          const mod = supplierMods[s.id] ?? 1.0;
+                          const baseEk = supplierBaseEk(p, s.id) * (1 - offerRabatt) * mod;
+                          const ml = modLabel(s.id);
+                          return (
+                            <option key={s.id} value={s.id} disabled={outage}>
+                              {outage ? "⛔ " : ""}{s.name}{ml ? ` (${ml})` : ""} · {euro(baseEk)}{outage ? " — Ausfall" : ""}
+                            </option>
+                          );
+                        })}
                       </select>
+                      {(() => {
+                        const ml = modLabel(sup);
+                        if (!ml) return null;
+                        const mod = supplierMods[sup] ?? 1.0;
+                        return (
+                          <span className={mod > 1.005 ? "erp-price-up" : "erp-price-down"}>
+                            {ml}
+                          </span>
+                        );
+                      })()}
+                      {(supplierOutage[sup] ?? 0) >= day && (
+                        <span className="erp-outage">⛔ Ausfall</span>
+                      )}
                     </td>
                     <td>
                       {euro(stueck)}

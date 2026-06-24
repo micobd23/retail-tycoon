@@ -5,6 +5,7 @@ import {
   unitPrice,
   supplierBaseEk,
   cheapestSupplier,
+  currentSeasonWave,
   SUPPLIERS,
   euro,
   dayToCalendar,
@@ -82,6 +83,13 @@ export interface Offer {
   daysLeft: number;
 }
 
+// Ein Saison-Event: einmaliger Nachfrage-Spike für ein Produkt, mit Mail-Vorankündigung.
+export interface SeasonEvent {
+  triggerDay: number; // globaler Tag, an dem der Spike passiert
+  productId: string;
+  notified: boolean; // wurde die Vorankündigungs-Mail schon gesendet?
+}
+
 const RABATTE = [0.1, 0.15, 0.2, 0.25];
 
 // Erzeugt ein Angebot für ein zufälliges Produkt (das noch keins hat).
@@ -94,7 +102,78 @@ function rollOffer(active: Record<string, Offer>): [string, Offer] | null {
   return [p.id, { rabatt, daysLeft }];
 }
 
-// Start-Angebote: 2 Stück.
+// --- Lieferantenpreise -------------------------------------------------------
+// Alle 3 Tage ändert sich der Preis jedes Lieferanten um ±0–15% (in 5%-Schritten).
+function rollSupplierMods(): Record<string, number> {
+  const steps = [-0.15, -0.10, -0.05, -0.05, 0, 0, 0.05, 0.05, 0.10, 0.15];
+  const mods: Record<string, number> = {};
+  for (const s of SUPPLIERS) {
+    mods[s.id] = 1 + steps[Math.floor(Math.random() * steps.length)];
+  }
+  return mods;
+}
+
+// --- Trend-Produkt -----------------------------------------------------------
+// Jeden Tag ein zufälliges verfügbares Produkt mit +30% Nachfrage.
+function rollTrendProduct(season: Season, seasonDay: number): string {
+  const wave = currentSeasonWave(seasonDay);
+  const available = CATALOG.filter(
+    (p) =>
+      (!p.onlyInSeason || p.onlyInSeason === season) &&
+      (!p.seasonWave || p.seasonWave === wave),
+  );
+  if (!available.length) return CATALOG[0].id;
+  return available[Math.floor(Math.random() * available.length)].id;
+}
+
+// --- Saison-Event ------------------------------------------------------------
+// Einmal pro Saison: Mega-Spike für ein zufälliges (saison-)passendes Produkt.
+// Trigger-Tag = 7–11 Tage nach Saison-Start; Vorankündigung 2 Tage früher per Mail.
+function makeSeasonEvent(firstDayOfSeason: number, season: Season): SeasonEvent {
+  const offset = 7 + Math.floor(Math.random() * 5); // Tag 7–11 innerhalb der Saison
+  const triggerDay = firstDayOfSeason + offset;
+  const candidates = CATALOG.filter(
+    (p) =>
+      !p.seasonWave && // Evergreens oder reguläre Produkte
+      (!p.onlyInSeason || p.onlyInSeason === season) &&
+      p.salesPerDay >= 10,
+  );
+  const p = candidates[Math.floor(Math.random() * candidates.length)] ?? CATALOG[0];
+  return { triggerDay, productId: p.id, notified: false };
+}
+
+// --- Lieferanten-Ausfall -----------------------------------------------------
+// 10% Chance je Tag, dass ein verfügbarer Lieferant 1–2 Tage ausfällt.
+function maybeSupplierOutage(
+  current: Record<string, number>,
+  day: number,
+): Record<string, number> | null {
+  const active = { ...current };
+  // Abgelaufene Ausfälle bereinigen.
+  for (const id of Object.keys(active)) {
+    if (active[id] < day) delete active[id];
+  }
+  if (Math.random() >= 0.1) return Object.keys(active).length ? active : null;
+  const free = SUPPLIERS.filter((s) => !active[s.id]);
+  if (free.length <= 1) return Object.keys(active).length ? active : null; // mindestens 1 frei lassen
+  const s = free[Math.floor(Math.random() * free.length)];
+  const duration = 1 + Math.floor(Math.random() * 2); // 1–2 Tage
+  active[s.id] = day + duration - 1; // letzter Tag des Ausfalls (inkl.)
+  // Mail schicken.
+  useMail.getState().receive({
+    from: "Lieferantenhotline",
+    subject: `⚠️ Lieferausfall: ${s.name}`,
+    body:
+      `Aufgrund eines internen Problems steht ${s.name} heute und ggf. morgen nicht zur Verfügung.\n\n` +
+      `Bitte weiche für diesen Zeitraum auf einen anderen Lieferanten aus.\n\n` +
+      `Wir entschuldigen uns für die Unannehmlichkeiten.`,
+    day,
+    kind: "info",
+  });
+  return active;
+}
+
+// --- Start-Angebote: 2 Stück.
 function seedOffers(): Record<string, Offer> {
   const active: Record<string, Offer> = {};
   for (let i = 0; i < 2; i++) {
@@ -110,24 +189,28 @@ interface EconomyState {
   mode: GameModeId | null;
   cash: number;
   day: number;
-  batches: Record<string, Batch[]>; // Chargen je Produkt-ID
-  stats: Record<string, ProductStat>; // lebenslange Statistik je Produkt
-  offers: Record<string, Offer>; // aktive befristete Angebote je Produkt-ID
-  upgrades: Upgrades; // gekaufte Ausbaustufen
-  lastRevenue: number; // Umsatz am zuletzt simulierten Tag
-  lastSpoiledValue: number; // Verlust durch Verderb am letzten Tag (EK-Wert)
-  satisfaction: number; // Kundenzufriedenheit (0–100)
-  lastMissed: Record<string, number>; // verpasste Nachfrage je Produkt (Vortag)
-  recap: DayRecap | null; // Daten des letzten Tagesabschlusses
-  recapOpen: boolean; // wird der Vollbild-Recap gerade angezeigt?
+  batches: Record<string, Batch[]>;
+  stats: Record<string, ProductStat>;
+  offers: Record<string, Offer>;
+  upgrades: Upgrades;
+  lastRevenue: number;
+  lastSpoiledValue: number;
+  satisfaction: number;
+  lastMissed: Record<string, number>;
+  recap: DayRecap | null;
+  recapOpen: boolean;
+  // Dynamische Lieferantenpreise: Multiplikator je Lieferant (1.0 = normal, ±15%).
+  supplierMods: Record<string, number>;
+  // Trend-Produkt des Tages: dieses Produkt hat +30% Nachfrage heute.
+  trendProductId: string | null;
+  // Saison-Event: einmaliger Mega-Spike pro Saison.
+  seasonEvent: SeasonEvent | null;
+  // Lieferanten-Ausfall: supplierId → globaler Tag bis zu dem der Ausfall geht (inkl.).
+  supplierOutage: Record<string, number>;
 
   startGame: (id: GameModeId) => void;
   resetGame: () => void;
-  buy: (
-    productId: string,
-    qty: number,
-    supplierId: string,
-  ) => { ok: boolean; msg?: string };
+  buy: (productId: string, qty: number, supplierId: string) => { ok: boolean; msg?: string };
   upgrade: (track: UpgradeTrack) => { ok: boolean; msg?: string };
   advanceDay: () => void;
   closeRecap: () => void;
@@ -185,14 +268,37 @@ export function seasonalFactor(p: Product, season: Season): number {
   return p.seasonFactors?.[season] ?? 1.0;
 }
 
-// Nachfrage/Tag eines Produkts (Drehzahl × Kundenstrom × Zufriedenheit × Saison).
-// Saison-Specials außerhalb ihrer Saison haben Nachfrage 0.
-// `sat` + `season` optional — werden dann aus dem aktuellen Zustand abgeleitet.
-export function effectiveSales(p: Product, u?: Upgrades, sat?: number, season?: Season): number {
-  const sz = season ?? dayToCalendar(useEconomy.getState().day).season;
+// Nachfrage/Tag — berücksichtigt: Saison, Aktionswelle, Kundenstrom, Zufriedenheit,
+// Trend-Produkt (+30%) und Saison-Event (+200%). Alle Parameter optional.
+export function effectiveSales(
+  p: Product,
+  u?: Upgrades,
+  sat?: number,
+  season?: Season,
+  seasonDay?: number,
+): number {
+  const state = useEconomy.getState();
+  const cal = dayToCalendar(state.day);
+  const sz = season ?? cal.season;
+  const sd = seasonDay ?? cal.seasonDay;
+
+  // Saison-Specials: nur in ihrer Saison und Welle.
   if (p.onlyInSeason && p.onlyInSeason !== sz) return 0;
-  const s = sat ?? useEconomy.getState().satisfaction;
-  return Math.round(p.salesPerDay * kundenstrom(u) * satisfactionMultiplier(s) * seasonalFactor(p, sz));
+  if (p.seasonWave && p.seasonWave !== currentSeasonWave(sd)) return 0;
+
+  const s = sat ?? state.satisfaction;
+  const sf = seasonalFactor(p, sz);
+  const trendFactor = state.trendProductId === p.id ? 1.3 : 1.0;
+  const eventFactor =
+    state.seasonEvent &&
+    state.day === state.seasonEvent.triggerDay &&
+    p.id === state.seasonEvent.productId
+      ? 3.0
+      : 1.0;
+
+  return Math.round(
+    p.salesPerDay * kundenstrom(u) * satisfactionMultiplier(s) * sf * trendFactor * eventFactor,
+  );
 }
 
 // Vorab-Schätzung des kommenden Tages (ohne den Zustand zu ändern) — für den
@@ -204,13 +310,13 @@ export function projectDay(): {
   soldFrisch: number;
 } {
   const { batches, upgrades, day, satisfaction } = useEconomy.getState();
-  const { season } = dayToCalendar(day);
+  const { season, seasonDay } = dayToCalendar(day);
   let revenue = 0;
   let soldTrocken = 0;
   let soldFrisch = 0;
   for (const p of CATALOG) {
     const stock = stockOf(batches, p.id);
-    const sell = Math.min(effectiveSales(p, upgrades, satisfaction, season), stock);
+    const sell = Math.min(effectiveSales(p, upgrades, satisfaction, season, seasonDay), stock);
     revenue += sell * p.vk;
     if (p.storage === "frisch") soldFrisch += sell;
     else soldTrocken += sell;
@@ -351,6 +457,10 @@ export const useEconomy = create<EconomyState>()(
       lastMissed: {},
       recap: null,
       recapOpen: false,
+      supplierMods: {},
+      trendProductId: null,
+      seasonEvent: null,
+      supplierOutage: {},
 
       startGame: (id) => {
         const mode = MODES.find((m) => m.id === id);
@@ -371,6 +481,10 @@ export const useEconomy = create<EconomyState>()(
           lastMissed: {},
           recap: null,
           recapOpen: false,
+          supplierMods: rollSupplierMods(),
+          trendProductId: rollTrendProduct("Frühling", 1),
+          seasonEvent: makeSeasonEvent(1, "Frühling"),
+          supplierOutage: {},
         });
 
         // Postfach frisch aufsetzen: Willkommensmail + die Start-Angebote.
@@ -407,6 +521,10 @@ export const useEconomy = create<EconomyState>()(
           lastMissed: {},
           recap: null,
           recapOpen: false,
+          supplierMods: {},
+          trendProductId: null,
+          seasonEvent: null,
+          supplierOutage: {},
         });
       },
 
@@ -414,10 +532,16 @@ export const useEconomy = create<EconomyState>()(
         if (qty <= 0) return { ok: false, msg: "Menge muss größer als 0 sein." };
         const p = byId(productId);
         if (!p) return { ok: false, msg: "Produkt unbekannt." };
-        const { cash, batches, offers, day, upgrades } = get();
-        // Effektiver EK = Lieferantenpreis − ggf. Angebot, dann Mengenrabatt.
+        const { cash, batches, offers, day, upgrades, supplierMods, supplierOutage } = get();
+        // Ausfall-Check.
+        if (supplierOutage[supplierId] !== undefined && supplierOutage[supplierId] >= day) {
+          const name = SUPPLIERS.find((s) => s.id === supplierId)?.name ?? supplierId;
+          return { ok: false, msg: `${name} ist gerade nicht verfügbar (Ausfall bis Tag ${supplierOutage[supplierId]}).` };
+        }
+        // Effektiver EK = Lieferantenpreis × Tagespreismod − ggf. Angebot, dann Mengenrabatt.
+        const priceMod = supplierMods[supplierId] ?? 1.0;
         const offerRabatt = offers[productId]?.rabatt ?? 0;
-        const effBase = supplierBaseEk(p, supplierId) * (1 - offerRabatt);
+        const effBase = supplierBaseEk(p, supplierId) * priceMod * (1 - offerRabatt);
         const total = +(unitPrice(effBase, qty) * qty).toFixed(2);
         if (total > cash) return { ok: false, msg: "Nicht genug Geld auf dem Konto." };
 
@@ -473,8 +597,9 @@ export const useEconomy = create<EconomyState>()(
       },
 
       advanceDay: () => {
-        const { batches, stats, cash, day, offers, upgrades, lastRevenue, satisfaction } = get();
-        const { season } = dayToCalendar(day);
+        const { batches, stats, cash, day, offers, upgrades, lastRevenue, satisfaction,
+          supplierMods, seasonEvent, supplierOutage } = get();
+        const { season, seasonDay } = dayToCalendar(day);
         const newBatches: Record<string, Batch[]> = {};
         const newStats: Record<string, ProductStat> = { ...stats };
         let revenue = 0;
@@ -488,10 +613,9 @@ export const useEconomy = create<EconomyState>()(
           let list = (batches[p.id] ?? []).map((b) => ({ ...b }));
           const stat = { ...(newStats[p.id] ?? emptyStat()) };
 
-          // 1) Verkauf nach Nachfrage (Drehzahl × Kundenstrom × Zufriedenheit × Saison), FIFO.
-          // Saison-Specials außerhalb ihrer Saison haben Nachfrage 0.
-          let soldThis = 0; // an diesem Tag verkaufte Stück dieses Produkts
-          const demand = effectiveSales(p, upgrades, satisfaction, season);
+          // 1) Verkauf nach Nachfrage (inkl. Saison, Welle, Trend, Event), FIFO.
+          let soldThis = 0;
+          const demand = effectiveSales(p, upgrades, satisfaction, season, seasonDay);
           const stock = list.reduce((s, b) => s + b.qty, 0);
           demandedTotal += demand;
           if (demand > stock) missedByProduct[p.id] = demand - stock;
@@ -546,29 +670,56 @@ export const useEconomy = create<EconomyState>()(
           }
         }
 
-        // Saison-Wechsel: wenn der nächste Tag eine neue Saison beginnt, Mail schicken.
+        // --- Saison-Wechsel-Logik -----------------------------------------------
         const nextCal = dayToCalendar(day + 1);
+        const SEASON_EMOJI: Record<string, string> = {
+          Frühling: "🌸", Sommer: "☀️", Herbst: "🍂", Winter: "❄️",
+        };
+        let newSeasonEvent = seasonEvent;
+
         if (nextCal.season !== season) {
-          const SEASON_EMOJI: Record<string, string> = {
-            Frühling: "🌸", Sommer: "☀️", Herbst: "🍂", Winter: "❄️",
-          };
-          const specials = CATALOG.filter((p) => p.onlyInSeason === nextCal.season);
-          const specialsText = specials.length
-            ? `\nNeu verfügbar: ${specials.map((p) => p.name).join(", ")}.`
-            : "";
+          // Neue Saison: Mail + neues Saison-Event anlegen.
+          const evergreens = CATALOG.filter((p) => p.onlyInSeason === nextCal.season && !p.seasonWave);
+          const wave1 = CATALOG.filter((p) => p.onlyInSeason === nextCal.season && p.seasonWave === 1);
+          const everText = evergreens.length ? `Dauerhaft: ${evergreens.map((p) => p.name).join(", ")}.` : "";
+          const w1Text = wave1.length ? `\nAktionswelle 1 (Tage 1–5): ${wave1.map((p) => p.name).join(", ")}.` : "";
           useMail.getState().receive({
             from: "Zentrale",
             subject: `${SEASON_EMOJI[nextCal.season]} ${nextCal.season} beginnt — Q${nextCal.quarter}`,
             body:
-              `Ab morgen (Tag ${day + 1}) beginnt ${nextCal.season}!` +
-              `\n\nDas Kaufverhalten deiner Kunden ändert sich — prüfe dein Sortiment und passe deine Bestellmengen an.${specialsText}` +
-              `\n\nViel Erfolg im ${nextCal.season}!`,
+              `Ab morgen (Tag ${day + 1}) beginnt ${nextCal.season}!\n\n` +
+              `Das Kaufverhalten deiner Kunden ändert sich — passe deine Bestellmengen an.\n\n` +
+              `${everText}${w1Text}\n\nViel Erfolg im ${nextCal.season}!`,
             day: day + 1,
             kind: "info",
           });
+          newSeasonEvent = makeSeasonEvent(day + 1, nextCal.season);
         }
 
-        // Jahreswechsel
+        // Aktionswellen-Wechsel innerhalb der Saison.
+        if (nextCal.season === season) {
+          const curWave = currentSeasonWave(seasonDay);
+          const nextWave = currentSeasonWave(nextCal.seasonDay);
+          if (nextWave !== curWave) {
+            const waveProducts = CATALOG.filter(
+              (p) => p.onlyInSeason === season && p.seasonWave === nextWave,
+            );
+            if (waveProducts.length) {
+              useMail.getState().receive({
+                from: "Zentrale",
+                subject: `${SEASON_EMOJI[season]} Aktionswelle ${nextWave} startet morgen`,
+                body:
+                  `Morgen startet Aktionswelle ${nextWave} im ${season}!\n\n` +
+                  `Neu im Sortiment: ${waveProducts.map((p) => p.name).join(", ")}.\n\n` +
+                  `Bestelle rechtzeitig!`,
+                day: day + 1,
+                kind: "info",
+              });
+            }
+          }
+        }
+
+        // Jahreswechsel.
         if (nextCal.year !== dayToCalendar(day).year) {
           useMail.getState().receive({
             from: "Zentrale",
@@ -580,6 +731,32 @@ export const useEconomy = create<EconomyState>()(
             kind: "info",
           });
         }
+
+        // --- Saison-Event: Vorankündigung 2 Tage vorher -----------------------
+        let notifiedEvent = newSeasonEvent;
+        if (newSeasonEvent && !newSeasonEvent.notified && day + 1 === newSeasonEvent.triggerDay - 1) {
+          const ep = byId(newSeasonEvent.productId);
+          useMail.getState().receive({
+            from: "Marktforschung",
+            subject: `📊 Trend-Alert: ${ep.name} übermorgen!`,
+            body:
+              `Unsere Analyse zeigt: In 2 Tagen ist mit einer massiven Nachfragespitze ` +
+              `bei ${ep.name} zu rechnen.\n\nSorge jetzt für ausreichend Vorrat — ` +
+              `wer gut bestückt ist, kann an diesem Tag besonders gut verdienen!`,
+            day: day + 1,
+            kind: "info",
+          });
+          notifiedEvent = { ...newSeasonEvent, notified: true };
+        }
+
+        // --- Neue Lieferantenpreise (alle 3 Tage) ----------------------------
+        const newSupplierMods = (day + 1) % 3 === 1 ? rollSupplierMods() : supplierMods;
+
+        // --- Trend-Produkt für morgen rollen ---------------------------------
+        const newTrend = rollTrendProduct(nextCal.season, nextCal.seasonDay);
+
+        // --- Lieferanten-Ausfall ---------------------------------------------
+        const newOutage = maybeSupplierOutage(supplierOutage, day + 1) ?? {};
 
         // Zufriedenheit + Kundenstimmen aus dem Tag ableiten.
         const missedUnits = Object.values(missedByProduct).reduce((s, n) => s + n, 0);
@@ -601,6 +778,10 @@ export const useEconomy = create<EconomyState>()(
           lastSpoiledValue: +spoiledValue.toFixed(2),
           satisfaction: newSat,
           lastMissed: missedByProduct,
+          supplierMods: newSupplierMods,
+          trendProductId: newTrend,
+          seasonEvent: notifiedEvent,
+          supplierOutage: newOutage,
           recap: {
             day, // der Tag, der gerade abgeschlossen wurde
             revenue: +revenue.toFixed(2),
@@ -621,9 +802,7 @@ export const useEconomy = create<EconomyState>()(
     }),
     {
       name: "retail-tycoon-save",
-      version: 4,
-      // Fehlende Felder mit Defaults befüllen statt den Stand zu löschen.
-      // So überleben bestehende Spielstände jeden Modell-Update.
+      version: 5,
       migrate: (raw) => {
         const s = (raw ?? {}) as Record<string, unknown>;
         return {
@@ -639,6 +818,10 @@ export const useEconomy = create<EconomyState>()(
           lastSpoiledValue: (s.lastSpoiledValue as number) ?? 0,
           satisfaction: (s.satisfaction as number) ?? 80,
           lastMissed: (s.lastMissed as Record<string, number>) ?? {},
+          supplierMods: (s.supplierMods as Record<string, number>) ?? {},
+          trendProductId: (s.trendProductId as string | null) ?? null,
+          seasonEvent: (s.seasonEvent as SeasonEvent | null) ?? null,
+          supplierOutage: (s.supplierOutage as Record<string, number>) ?? {},
           recap: null,
           recapOpen: false,
         };
@@ -656,6 +839,10 @@ export const useEconomy = create<EconomyState>()(
         lastSpoiledValue: s.lastSpoiledValue,
         satisfaction: s.satisfaction,
         lastMissed: s.lastMissed,
+        supplierMods: s.supplierMods,
+        trendProductId: s.trendProductId,
+        seasonEvent: s.seasonEvent,
+        supplierOutage: s.supplierOutage,
         recap: s.recap,
       }),
     },

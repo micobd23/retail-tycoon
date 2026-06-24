@@ -71,7 +71,7 @@ export function Window({
             onClick={() => toggleMax(id)}
             title={max ? "Wiederherstellen" : "Maximieren"}
           >
-            {max ? "🗗" : "🗖"}
+            <span className={max ? "os-icon-restore" : "os-icon-maximize"} />
           </button>
           <button
             className="os-window-btn os-window-close"
