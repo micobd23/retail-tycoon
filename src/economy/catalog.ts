@@ -31,7 +31,8 @@ export interface Product {
   shelfLifeDays?: number;
   seasonFactors?: Partial<Record<Season, number>>;
   onlyInSeason?: Season;
-  seasonWave?: 1 | 2 | 3; // nur bei onlyInSeason gesetzt: Welle 1–3 (~5 Tage je)
+  seasonWave?: 1 | 2 | 3;
+  requiresUpgrade?: "eigenmarke"; // nur verfügbar wenn entsprechendes Upgrade aktiv
 }
 
 // 13 Tage pro Quartal · 4 Quartale = 52 Tage pro Jahr
@@ -284,6 +285,22 @@ export const CATALOG: Product[] = [
     id: "adventstee", name: "Adventstee 20er", category: "Saisonales", storage: "trocken",
     ek: 1.2, vk: 2.49, salesPerDay: 18, onlyInSeason: "Winter", seasonWave: 3,
   },
+
+  // =========================================================================
+  // EIGENMARKEN (nur verfügbar nach Eigenmarken-Regal-Upgrade)
+  // =========================================================================
+  {
+    id: "em-cola", name: "EigenMarke Cola", category: "Getränke", storage: "trocken",
+    ek: 0.22, vk: 0.65, salesPerDay: 13, requiresUpgrade: "eigenmarke",
+  },
+  {
+    id: "em-wasser", name: "EigenMarke Wasser", category: "Getränke", storage: "trocken",
+    ek: 0.12, vk: 0.45, salesPerDay: 15, requiresUpgrade: "eigenmarke",
+  },
+  {
+    id: "em-mehl", name: "EigenMarke Mehl 1 kg", category: "Grundnahrung", storage: "trocken",
+    ek: 0.45, vk: 1.09, salesPerDay: 9, requiresUpgrade: "eigenmarke",
+  },
 ];
 
 // --- Staffelpreise (Mengenrabatt) ----------------------------------------
@@ -310,13 +327,22 @@ export interface Supplier {
   id: string;
   name: string;
   factors: Partial<Record<Category, number>> & { default: number };
+  minQty?: number;          // Mindestmenge je Bestellung (nur Großmarkt)
+  requiresUpgrade?: "lieferwagen"; // nur verfügbar wenn Upgrade aktiv
 }
 
 export const SUPPLIERS: Supplier[] = [
-  { id: "becker", name: "Großmarkt Becker", factors: { default: 1.0 } },
-  { id: "mueller", name: "Getränke Müller", factors: { Getränke: 0.85, Saisonales: 0.9, default: 1.06 } },
-  { id: "frischefix", name: "FrischeFix", factors: { Frische: 0.88, Saisonales: 0.88, default: 1.05 } },
-  { id: "drodirekt", name: "DrogerieDirekt", factors: { Drogerie: 0.82, Süßwaren: 0.94, default: 1.04 } },
+  { id: "becker",     name: "Großmarkt Becker",  factors: { default: 1.0 } },
+  { id: "mueller",    name: "Getränke Müller",    factors: { Getränke: 0.85, Saisonales: 0.90, default: 1.06 } },
+  { id: "frischefix", name: "FrischeFix",         factors: { Frische: 0.88, Saisonales: 0.88, default: 1.05 } },
+  { id: "drodirekt",  name: "DrogerieDirekt",     factors: { Drogerie: 0.82, Süßwaren: 0.94, default: 1.04 } },
+  {
+    id: "grossmarkt",
+    name: "Eigener Großmarkt",
+    factors: { default: 0.82 }, // −18 % günstiger als Becker
+    minQty: 200,
+    requiresUpgrade: "lieferwagen",
+  },
 ];
 
 export function supplierBaseEk(p: Product, supplierId: string): number {
@@ -325,11 +351,14 @@ export function supplierBaseEk(p: Product, supplierId: string): number {
   return +(p.ek * f).toFixed(4);
 }
 
-export function cheapestSupplier(p: Product): string {
-  return SUPPLIERS.reduce(
-    (best, s) =>
-      supplierBaseEk(p, s.id) < supplierBaseEk(p, best) ? s.id : best,
-    SUPPLIERS[0].id,
+export function cheapestSupplier(p: Product, unlockedSuppliers?: string[]): string {
+  const pool = unlockedSuppliers
+    ? SUPPLIERS.filter((s) => unlockedSuppliers.includes(s.id))
+    : SUPPLIERS.filter((s) => !s.requiresUpgrade);
+  if (!pool.length) return SUPPLIERS[0].id;
+  return pool.reduce(
+    (best, s) => supplierBaseEk(p, s.id) < supplierBaseEk(p, best) ? s.id : best,
+    pool[0].id,
   );
 }
 

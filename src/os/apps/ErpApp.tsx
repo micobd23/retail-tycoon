@@ -7,6 +7,8 @@ import {
   kundenstrom,
   effectiveSales,
   upgradeCost,
+  dailyWage,
+  effectiveShelfLife,
   UPGRADE_META,
   type Upgrades,
   type UpgradeTrack,
@@ -47,11 +49,10 @@ const SEASON_EMOJI: Record<string, string> = {
 type Filter = "alle" | Category;
 const FILTERS: Filter[] = ["alle", ...CATEGORIES];
 
-// Empfohlene Bestellmenge für Frischware (Haltbarkeit × effektive Drehzahl).
-// Berücksichtigt den Kundenstrom, damit die Empfehlung bei mehr Kassen mitwächst.
+// Empfohlene Bestellmenge für Frischware: effektive Drehzahl × effektive Haltbarkeit (inkl. Kühltheke).
 const empfMenge = (p: Product, u: Upgrades) =>
   p.storage === "frisch" && p.shelfLifeDays
-    ? effectiveSales(p, u) * p.shelfLifeDays
+    ? effectiveSales(p, u) * effectiveShelfLife(p, u)
     : null;
 
 type Tab = "einkauf" | "statistik" | "ausbau";
@@ -102,6 +103,12 @@ export function ErpApp() {
             {lastSpoiledValue > 0 ? "−" + euro(lastSpoiledValue) : "—"}
           </span>
         </div>
+        {dailyWage(upgrades) > 0 && (
+          <div className="erp-stat">
+            <span className="erp-stat-label">Tageslohn</span>
+            <span className="erp-stat-value erp-loss">−{euro(dailyWage(upgrades))}/Tag</span>
+          </div>
+        )}
         <div className="erp-stat">
           <span className="erp-stat-label">Zufriedenheit</span>
           <span
@@ -202,16 +209,23 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
   const supplierMods = useEconomy((s) => s.supplierMods);
   const trendProductId = useEconomy((s) => s.trendProductId);
   const supplierOutage = useEconomy((s) => s.supplierOutage);
+  const contracts = useEconomy((s) => s.contracts);
   const buy = useEconomy((s) => s.buy);
   const { season, seasonDay } = dayToCalendar(day);
   const wave = currentSeasonWave(seasonDay);
+
+  // Verfügbare Lieferanten (Großmarkt nur wenn Lieferwagen freigeschaltet).
+  const availableSuppliers = SUPPLIERS.filter(
+    (s) => !s.requiresUpgrade || (upgrades as unknown as Record<string, number>)[s.requiresUpgrade] >= 1,
+  );
 
   const [filter, setFilter] = useState<Filter>("alle");
   const [qty, setQty] = useState<Record<string, number>>({});
   const [supplier, setSupplier] = useState<Record<string, string>>({});
 
   const getQty = (id: string) => qty[id] ?? DEFAULT_QTY;
-  const getSupplier = (p: Product) => supplier[p.id] ?? cheapestSupplier(p);
+  const getSupplier = (p: Product) =>
+    supplier[p.id] ?? cheapestSupplier(p, availableSuppliers.map((s) => s.id));
 
   // Freier Platz je Fläche -> Kauf blockieren, wenn die Menge nicht reinpasst.
   const used = usedCapacity(batches);
@@ -267,10 +281,10 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
           {shownCats.map((cat) => {
             const items = CATALOG.filter((p) => {
               if (p.category !== cat) return false;
-              // Saison-Specials außerhalb ihrer Saison ausblenden
               if (p.onlyInSeason && p.onlyInSeason !== season) return false;
-              // Aktionswellen-Produkte: nur aktive Welle zeigen
               if (p.seasonWave && p.seasonWave !== wave) return false;
+              // Eigenmarken nur zeigen wenn Upgrade aktiv
+              if (p.requiresUpgrade === "eigenmarke" && (upgrades.eigenmarke ?? 0) < 1) return false;
               return true;
             });
             return [
@@ -282,24 +296,30 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
               ...items.map((p) => {
                 const menge = getQty(p.id);
                 const sup = getSupplier(p);
+                const supObj = availableSuppliers.find((s) => s.id === sup);
                 const offer = offers[p.id];
                 const offerRabatt = offer?.rabatt ?? 0;
                 const supMod = supplierMods[sup] ?? 1.0;
-                const effBase = supplierBaseEk(p, sup) * (1 - offerRabatt) * supMod;
+                const contractRabatt = contracts.includes(sup) ? 0.10 : 0.0;
+                const effBase = supplierBaseEk(p, sup) * supMod * (1 - offerRabatt) * (1 - contractRabatt);
                 const stueck = unitPrice(effBase, menge);
                 const mengenRabatt = rabattProzent(menge);
                 const gesamt = +(stueck * menge).toFixed(2);
                 const marge = +(p.vk - stueck).toFixed(2);
                 const frei = freiFuer(p);
+                const minQty = supObj?.minQty ?? 0;
+                const tooLow = minQty > 0 && menge > 0 && menge < minQty;
                 const tooExpensive = gesamt > cash;
                 const tooFull = menge > frei;
-                const disabled = tooExpensive || tooFull || menge <= 0;
+                const disabled = tooExpensive || tooFull || menge <= 0 || tooLow;
                 const isTrend = trendProductId === p.id;
-                const title = tooExpensive
-                  ? "Nicht genug Geld"
-                  : tooFull
-                    ? `Kein Platz — nur ${frei} frei`
-                    : `Gesamt ${euro(gesamt)}`;
+                const title = tooLow
+                  ? `Mindestmenge: ${minQty} Stück`
+                  : tooExpensive
+                    ? "Nicht genug Geld"
+                    : tooFull
+                      ? `Kein Platz — nur ${frei} frei`
+                      : `Gesamt ${euro(gesamt)}`;
                 return (
                   <tr key={p.id} className={isTrend ? "erp-row-trend" : ""}>
                     <td className="l">
@@ -319,6 +339,9 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                         <span className="erp-saison">
                           {SEASON_EMOJI[p.onlyInSeason]}{p.seasonWave ? ` Welle ${p.seasonWave}` : ` ${p.onlyInSeason}-Special`}
                         </span>
+                      )}
+                      {p.requiresUpgrade === "eigenmarke" && (
+                        <span className="erp-eigenmarke">🏷️ Eigenmarke</span>
                       )}
                       {empfMenge(p, upgrades) && (
                         <span className="erp-empf">
@@ -347,14 +370,17 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                           setSupplier((s) => ({ ...s, [p.id]: e.target.value }))
                         }
                       >
-                        {SUPPLIERS.map((s) => {
+                        {availableSuppliers.map((s) => {
                           const outage = (supplierOutage[s.id] ?? 0) >= day;
                           const mod = supplierMods[s.id] ?? 1.0;
-                          const baseEk = supplierBaseEk(p, s.id) * (1 - offerRabatt) * mod;
+                          const cRabatt = contracts.includes(s.id) ? 0.10 : 0.0;
+                          const baseEk = supplierBaseEk(p, s.id) * mod * (1 - offerRabatt) * (1 - cRabatt);
                           const ml = modLabel(s.id);
+                          const contractMark = contracts.includes(s.id) ? " 🤝" : "";
+                          const minMark = s.minQty ? ` (min. ${s.minQty})` : "";
                           return (
                             <option key={s.id} value={s.id} disabled={outage}>
-                              {outage ? "⛔ " : ""}{s.name}{ml ? ` (${ml})` : ""} · {euro(baseEk)}{outage ? " — Ausfall" : ""}
+                              {outage ? "⛔ " : ""}{s.name}{contractMark}{minMark}{ml ? ` ${ml}` : ""} · {euro(baseEk)}{outage ? " — Ausfall" : ""}
                             </option>
                           );
                         })}
@@ -759,68 +785,169 @@ function StatKategorien() {
 }
 
 // --- Ausbau-Ansicht -------------------------------------------------------
-const TRACKS: UpgradeTrack[] = ["lager", "flaeche", "kassen"];
+const TRACKS_CLASSIC: UpgradeTrack[] = ["lager", "flaeche", "kassen", "kuehltheke", "marketing", "personal"];
+const TRACKS_EINMALIG: UpgradeTrack[] = ["lieferwagen", "eigenmarke"];
 
 function AusbauView() {
   const cash = useEconomy((s) => s.cash);
   const upgrades = useEconomy((s) => s.upgrades);
+  const contracts = useEconomy((s) => s.contracts);
   const doUpgrade = useEconomy((s) => s.upgrade);
+  const doSign = useEconomy((s) => s.signContract);
+  const doCancel = useEconomy((s) => s.cancelContract);
   const [msg, setMsg] = useState<string | null>(null);
 
   const cap = capacityOf(upgrades);
   const strom = kundenstrom(upgrades);
+  const wage = dailyWage(upgrades);
 
-  // Aktueller Effekt-Text je Linie für die nächste Stufe.
   const effektJetzt = (track: UpgradeTrack): string => {
-    if (track === "lager") return `${cap.trocken.toLocaleString("de-DE")} Plätze`;
-    if (track === "flaeche") return `${cap.frisch.toLocaleString("de-DE")} Plätze`;
-    return `Kundenstrom ×${strom.toFixed(2)}`;
+    if (track === "lager") return `${cap.trocken.toLocaleString("de-DE")} Plätze trocken`;
+    if (track === "flaeche") return `${cap.frisch.toLocaleString("de-DE")} Plätze frisch`;
+    if (track === "kassen") return `Kundenstrom ×${strom.toFixed(2)}`;
+    if (track === "kuehltheke") return upgrades.kuehltheke > 0 ? `+${upgrades.kuehltheke} T Haltbarkeit` : "kein Bonus";
+    if (track === "marketing") return upgrades.marketing > 0 ? `+${upgrades.marketing * 8}% Kundenstrom` : "kein Bonus";
+    if (track === "personal") return upgrades.personal > 0 ? `${upgrades.personal} Mitarbeiter · −${upgrades.personal * 10}% Verderb · ${euro(wage)}/Tag` : "kein Personal";
+    if (track === "lieferwagen") return upgrades.lieferwagen >= 1 ? "Aktiv ✓" : "Nicht freigeschaltet";
+    if (track === "eigenmarke") return upgrades.eigenmarke >= 1 ? "Aktiv ✓" : "Nicht freigeschaltet";
+    return "";
   };
 
   const handle = (track: UpgradeTrack) => {
     const res = doUpgrade(track);
-    setMsg(
-      res.ok
-        ? `✅ ${UPGRADE_META[track].name} — Stufe ${upgrades[track] + 1} erreicht.`
-        : `⚠️ ${res.msg}`,
+    setMsg(res.ok
+      ? `✅ ${UPGRADE_META[track].name} — Stufe ${upgrades[track] + 1} erreicht.`
+      : `⚠️ ${res.msg}`
     );
   };
 
+  const handleSign = (supplierId: string) => {
+    const res = doSign(supplierId);
+    const name = SUPPLIERS.find((s) => s.id === supplierId)?.name ?? supplierId;
+    setMsg(res.ok ? `✅ Vertrag mit ${name} abgeschlossen (−10% dauerhaft).` : `⚠️ ${res.msg}`);
+  };
+
   return (
-    <div className="erp-table-wrap">
+    <div className="erp-table-wrap" style={{ padding: "12px 16px" }}>
       <div className="erp-ausbau-intro">
-        Investiere deinen Gewinn in den Betrieb. Jede Stufe kostet mehr als die
-        vorige — überlege, was dein Wachstum gerade am meisten bremst.
+        Investiere deinen Gewinn in den Betrieb. Jede Stufe kostet mehr als die vorige.
       </div>
       {msg && <div className="erp-msg">{msg}</div>}
 
+      <div className="ausbau-section-title">📦 Kapazität & Betrieb</div>
       <div className="erp-ausbau-grid">
-        {TRACKS.map((track) => {
+        {TRACKS_CLASSIC.map((track) => {
           const meta = UPGRADE_META[track];
           const level = upgrades[track];
+          const maxed = meta.maxLevel !== undefined && level >= meta.maxLevel;
           const cost = upgradeCost(track, level);
           const tooExpensive = cost > cash;
           return (
-            <div key={track} className="erp-ausbau-card">
+            <div key={track} className={"erp-ausbau-card" + (maxed ? " maxed" : "")}>
               <div className="erp-ausbau-head">
                 <span className="erp-ausbau-icon">{meta.icon}</span>
                 <div>
                   <div className="erp-ausbau-name">{meta.name}</div>
-                  <div className="erp-ausbau-level">Stufe {level}</div>
+                  <div className="erp-ausbau-level">
+                    Stufe {level}{meta.maxLevel ? ` / ${meta.maxLevel}` : ""}
+                  </div>
                 </div>
               </div>
               <div className="erp-ausbau-desc">{meta.desc}</div>
               <div className="erp-ausbau-effect">
                 Aktuell: <strong>{effektJetzt(track)}</strong>
               </div>
-              <button
-                className="erp-buy erp-ausbau-buy"
-                disabled={tooExpensive}
-                title={tooExpensive ? "Nicht genug Geld" : `Kosten ${euro(cost)}`}
-                onClick={() => handle(track)}
-              >
-                Ausbauen · {euro(cost)}
-              </button>
+              {maxed ? (
+                <div className="ausbau-maxed">Maximalstufe erreicht ✓</div>
+              ) : (
+                <button
+                  className="erp-buy erp-ausbau-buy"
+                  disabled={tooExpensive}
+                  title={tooExpensive ? "Nicht genug Geld" : `Kosten ${euro(cost)}`}
+                  onClick={() => handle(track)}
+                >
+                  Ausbauen · {euro(cost)}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="ausbau-section-title" style={{ marginTop: 20 }}>🔓 Einmalige Freischaltungen</div>
+      <div className="erp-ausbau-grid">
+        {TRACKS_EINMALIG.map((track) => {
+          const meta = UPGRADE_META[track];
+          const level = upgrades[track];
+          const unlocked = level >= 1;
+          const cost = upgradeCost(track, 0);
+          const tooExpensive = cost > cash;
+          return (
+            <div key={track} className={"erp-ausbau-card" + (unlocked ? " maxed" : "")}>
+              <div className="erp-ausbau-head">
+                <span className="erp-ausbau-icon">{meta.icon}</span>
+                <div>
+                  <div className="erp-ausbau-name">{meta.name}</div>
+                  <div className="erp-ausbau-level">{unlocked ? "Freigeschaltet" : "Gesperrt"}</div>
+                </div>
+              </div>
+              <div className="erp-ausbau-desc">{meta.desc}</div>
+              {unlocked ? (
+                <div className="ausbau-maxed">Aktiv ✓</div>
+              ) : (
+                <button
+                  className="erp-buy erp-ausbau-buy"
+                  disabled={tooExpensive}
+                  title={tooExpensive ? "Nicht genug Geld" : `Einmalig ${euro(cost)}`}
+                  onClick={() => handle(track)}
+                >
+                  Freischalten · {euro(cost)}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="ausbau-section-title" style={{ marginTop: 20 }}>🤝 Stammkunden-Verträge</div>
+      <div className="erp-ausbau-intro" style={{ marginBottom: 10 }}>
+        Einmalig 1.000 € pro Vertrag → dauerhaft −10% bei diesem Lieferanten. Maximal 2 gleichzeitig.
+        Verträge können jederzeit gekündigt werden (kein Rückerstattung).
+      </div>
+      <div className="erp-ausbau-grid">
+        {SUPPLIERS.filter((s) => !s.requiresUpgrade || (upgrades as unknown as Record<string,number>)[s.requiresUpgrade] >= 1).map((s) => {
+          const active = contracts.includes(s.id);
+          const canSign = !active && contracts.length < 2 && cash >= 1000;
+          return (
+            <div key={s.id} className={"erp-ausbau-card" + (active ? " maxed" : "")}>
+              <div className="erp-ausbau-head">
+                <span className="erp-ausbau-icon">🏪</span>
+                <div>
+                  <div className="erp-ausbau-name">{s.name}</div>
+                  <div className="erp-ausbau-level">{active ? "Vertrag aktiv 🤝" : "Kein Vertrag"}</div>
+                </div>
+              </div>
+              <div className="erp-ausbau-desc">
+                {active ? "−10 % auf alle Bestellungen bei diesem Lieferanten." : "Für 1.000 € Stammkunden-Rabatt sichern."}
+              </div>
+              {active ? (
+                <button
+                  className="erp-buy erp-ausbau-buy"
+                  style={{ background: "#b71c1c" }}
+                  onClick={() => { doCancel(s.id); setMsg(`Vertrag mit ${s.name} gekündigt.`); }}
+                >
+                  Vertrag kündigen
+                </button>
+              ) : (
+                <button
+                  className="erp-buy erp-ausbau-buy"
+                  disabled={!canSign}
+                  title={!canSign ? (contracts.length >= 2 ? "Maximal 2 Verträge" : "Nicht genug Geld") : ""}
+                  onClick={() => handleSign(s.id)}
+                >
+                  Vertrag abschließen · {euro(1000)}
+                </button>
+              )}
             </div>
           );
         })}

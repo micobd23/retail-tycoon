@@ -222,11 +222,15 @@ interface EconomyState {
   history: DayRecord[];
   // Kumulierte Gesamtnachfrage je Produkt (für Fill-Rate-Berechnung).
   demandedByProduct: Record<string, number>;
+  // Stammkunden-Verträge: Liste der Lieferanten-IDs mit aktivem Vertrag (max. 2).
+  contracts: string[];
 
   startGame: (id: GameModeId) => void;
   resetGame: () => void;
   buy: (productId: string, qty: number, supplierId: string) => { ok: boolean; msg?: string };
   upgrade: (track: UpgradeTrack) => { ok: boolean; msg?: string };
+  signContract: (supplierId: string) => { ok: boolean; msg?: string };
+  cancelContract: (supplierId: string) => void;
   advanceDay: () => void;
   closeRecap: () => void;
 }
@@ -248,12 +252,20 @@ export type StorageArea = "trocken" | "frisch";
 
 // Stufen, die der Spieler kaufen kann.
 export interface Upgrades {
-  lager: number; // Stufen Lager-Ausbau (Trockenware-Kapazität)
-  flaeche: number; // Stufen Verkaufsflächen-Ausbau (Frischware-Kapazität)
-  kassen: number; // Stufen Kassen-Ausbau (Kundenstrom = mehr Verkäufe/Tag)
+  lager: number;       // +4.000 Trockenware-Kapazität
+  flaeche: number;     // +1.000 Frischware-Kapazität
+  kassen: number;      // +15% Kundenstrom
+  kuehltheke: number;  // +1 Tag Haltbarkeit Frischware (max. 3)
+  marketing: number;   // +8% Kundenstrom-Multiplikator (max. 5)
+  personal: number;    // Mitarbeiter: −10% Verderb + Zufriedenheit (max. 3, Tageslohn)
+  lieferwagen: number; // einmalig: Großmarkt als 4. Lieferant (min. 200 Stk, −18%)
+  eigenmarke: number;  // einmalig: 3 Eigenmarken-Produkte freischalten
 }
 
-const emptyUpgrades = (): Upgrades => ({ lager: 0, flaeche: 0, kassen: 0 });
+const emptyUpgrades = (): Upgrades => ({
+  lager: 0, flaeche: 0, kassen: 0,
+  kuehltheke: 0, marketing: 0, personal: 0, lieferwagen: 0, eigenmarke: 0,
+});
 
 // Basis-Kapazität (Stufe 0) + Zuwachs je Stufe.
 const BASE_CAP = { trocken: 10000, frisch: 2500 };
@@ -267,9 +279,20 @@ export function capacityOf(u?: Upgrades): { trocken: number; frisch: number } {
   };
 }
 
-// Kundenstrom-Multiplikator: jede Kassen-Stufe bringt +15 % Verkäufe/Tag.
+// Kundenstrom: Kassen (+15%/Stufe) × Marketing (+8%/Stufe) — beide multiplikativ.
 export function kundenstrom(u?: Upgrades): number {
-  return 1 + (u?.kassen ?? 0) * 0.15;
+  return (1 + (u?.kassen ?? 0) * 0.15) * (1 + (u?.marketing ?? 0) * 0.08);
+}
+
+// Täglicher Lohn für alle angestellten Mitarbeiter.
+export function dailyWage(u?: Upgrades): number {
+  return (u?.personal ?? 0) * 60;
+}
+
+// Effektive Haltbarkeit eines Frischprodukts (inkl. Kühltheke-Bonus).
+export function effectiveShelfLife(p: Product, u?: Upgrades): number {
+  if (!p.shelfLifeDays) return 0;
+  return p.shelfLifeDays + (u?.kuehltheke ?? 0);
 }
 
 // Zufriedenheit wirkt mild auf die Nachfrage zurück: zufriedene Kunden bleiben,
@@ -340,11 +363,14 @@ export function projectDay(): {
 }
 
 // --- Ausbau-Linien (Meta + Kostenkurve) ----------------------------------
-export type UpgradeTrack = "lager" | "flaeche" | "kassen";
+export type UpgradeTrack =
+  | "lager" | "flaeche" | "kassen"
+  | "kuehltheke" | "marketing" | "personal"
+  | "lieferwagen" | "eigenmarke";
 
 export const UPGRADE_META: Record<
   UpgradeTrack,
-  { name: string; icon: string; desc: string; baseCost: number; growth: number }
+  { name: string; icon: string; desc: string; baseCost: number; growth: number; maxLevel?: number }
 > = {
   lager: {
     name: "Lager vergrößern",
@@ -366,6 +392,46 @@ export const UPGRADE_META: Record<
     desc: "+15 % Kundenstrom (mehr Verkäufe/Tag).",
     baseCost: 3000,
     growth: 1.8,
+  },
+  kuehltheke: {
+    name: "Kühltheke ausbauen",
+    icon: "🌡️",
+    desc: "+1 Tag Haltbarkeit für alle Frischprodukte.",
+    baseCost: 3500,
+    growth: 1.7,
+    maxLevel: 3,
+  },
+  marketing: {
+    name: "Marketing & Werbung",
+    icon: "📣",
+    desc: "+8 % Kundenstrom — mehr Laufkundschaft (stapelt mit Kassen).",
+    baseCost: 4000,
+    growth: 1.9,
+    maxLevel: 5,
+  },
+  personal: {
+    name: "Mitarbeiter einstellen",
+    icon: "👷",
+    desc: "−10 % Verderb + Zufriedenheitsbonus. Kostet 60 €/Tag pro Mitarbeiter.",
+    baseCost: 5000,
+    growth: 1.5,
+    maxLevel: 3,
+  },
+  lieferwagen: {
+    name: "Eigener Lieferwagen",
+    icon: "🚐",
+    desc: "Schaltet Eigenen Großmarkt als 4. Lieferanten frei (−18 %, Mindestmenge 200 Stk).",
+    baseCost: 8000,
+    growth: 1,
+    maxLevel: 1,
+  },
+  eigenmarke: {
+    name: "Eigenmarken-Regal",
+    icon: "🏷️",
+    desc: "Schaltet 3 Eigenmarken-Produkte mit besserer Marge frei (Cola, Wasser, Mehl).",
+    baseCost: 6000,
+    growth: 1,
+    maxLevel: 1,
   },
 };
 
@@ -425,8 +491,9 @@ function computeSatisfaction(args: {
   served: number;
   missedByProduct: Record<string, number>;
   upgrades: Upgrades;
+  personalBonus?: number;
 }): { satisfaction: number; voices: CustomerVoice[] } {
-  const { prevSat, demanded, served, missedByProduct, upgrades } = args;
+  const { prevSat, demanded, served, missedByProduct, upgrades, personalBonus = 0 } = args;
   const serviceRate = demanded > 0 ? served / demanded : 1;
 
   // Kassen-Komfort: Andrang vs. Kassenzahl (mild gewichtet).
@@ -434,7 +501,7 @@ function computeSatisfaction(args: {
   const load = demanded / (kassen * 300);
   const queueOk = load <= 1 ? 1 : Math.max(0, 1 - (load - 1) * 0.6);
 
-  const target = 100 * (0.85 * serviceRate + 0.15 * queueOk);
+  const target = Math.min(100, 100 * (0.85 * serviceRate + 0.15 * queueOk) + personalBonus);
   // Trägheit: ein einzelner Tag verschiebt die Zufriedenheit nur teilweise.
   const satisfaction = Math.round(
     Math.max(0, Math.min(100, prevSat * 0.6 + target * 0.4)),
@@ -478,6 +545,7 @@ export const useEconomy = create<EconomyState>()(
       supplierOutage: {},
       history: [],
       demandedByProduct: {},
+      contracts: [],
 
       startGame: (id) => {
         const mode = MODES.find((m) => m.id === id);
@@ -504,6 +572,7 @@ export const useEconomy = create<EconomyState>()(
           supplierOutage: {},
           history: [],
           demandedByProduct: {},
+          contracts: [],
         });
 
         // Postfach frisch aufsetzen: Willkommensmail + die Start-Angebote.
@@ -546,6 +615,7 @@ export const useEconomy = create<EconomyState>()(
           supplierOutage: {},
           history: [],
           demandedByProduct: {},
+          contracts: [],
         });
       },
 
@@ -553,16 +623,29 @@ export const useEconomy = create<EconomyState>()(
         if (qty <= 0) return { ok: false, msg: "Menge muss größer als 0 sein." };
         const p = byId(productId);
         if (!p) return { ok: false, msg: "Produkt unbekannt." };
-        const { cash, batches, offers, day, upgrades, supplierMods, supplierOutage } = get();
+        const { cash, batches, offers, day, upgrades, supplierMods, supplierOutage, contracts } = get();
+        // Eigenmarken: nur kaufen wenn Upgrade aktiv.
+        if (p.requiresUpgrade === "eigenmarke" && (upgrades.eigenmarke ?? 0) < 1) {
+          return { ok: false, msg: "Eigenmarken-Regal noch nicht freigeschaltet." };
+        }
         // Ausfall-Check.
         if (supplierOutage[supplierId] !== undefined && supplierOutage[supplierId] >= day) {
           const name = SUPPLIERS.find((s) => s.id === supplierId)?.name ?? supplierId;
           return { ok: false, msg: `${name} ist gerade nicht verfügbar (Ausfall bis Tag ${supplierOutage[supplierId]}).` };
         }
-        // Effektiver EK = Lieferantenpreis × Tagespreismod − ggf. Angebot, dann Mengenrabatt.
+        // Großmarkt: Lieferwagen-Upgrade + Mindestmenge prüfen.
+        const sup = SUPPLIERS.find((s) => s.id === supplierId);
+        if (sup?.requiresUpgrade === "lieferwagen" && (upgrades.lieferwagen ?? 0) < 1) {
+          return { ok: false, msg: "Lieferwagen noch nicht vorhanden." };
+        }
+        if (sup?.minQty && qty < sup.minQty) {
+          return { ok: false, msg: `${sup.name} liefert mindestens ${sup.minQty} Stück.` };
+        }
+        // Effektiver EK: Lieferantenpreis × Tagesmod × (1 − Angebotsrabatt) × (1 − Vertragsrabatt).
         const priceMod = supplierMods[supplierId] ?? 1.0;
         const offerRabatt = offers[productId]?.rabatt ?? 0;
-        const effBase = supplierBaseEk(p, supplierId) * priceMod * (1 - offerRabatt);
+        const contractRabatt = contracts.includes(supplierId) ? 0.10 : 0.0;
+        const effBase = supplierBaseEk(p, supplierId) * priceMod * (1 - offerRabatt) * (1 - contractRabatt);
         const total = +(unitPrice(effBase, qty) * qty).toFixed(2);
         if (total > cash) return { ok: false, msg: "Nicht genug Geld auf dem Konto." };
 
@@ -608,6 +691,10 @@ export const useEconomy = create<EconomyState>()(
       upgrade: (track) => {
         const { cash, upgrades } = get();
         const level = upgrades[track];
+        const meta = UPGRADE_META[track];
+        if (meta.maxLevel !== undefined && level >= meta.maxLevel) {
+          return { ok: false, msg: "Maximalstufe bereits erreicht." };
+        }
         const cost = upgradeCost(track, level);
         if (cost > cash) return { ok: false, msg: "Nicht genug Geld für den Ausbau." };
         set({
@@ -615,6 +702,36 @@ export const useEconomy = create<EconomyState>()(
           upgrades: { ...upgrades, [track]: level + 1 },
         });
         return { ok: true };
+      },
+
+      signContract: (supplierId) => {
+        const { cash, contracts } = get();
+        if (contracts.includes(supplierId)) {
+          return { ok: false, msg: "Mit diesem Lieferanten besteht bereits ein Vertrag." };
+        }
+        if (contracts.length >= 2) {
+          return { ok: false, msg: "Maximal 2 Stammkunden-Verträge gleichzeitig möglich." };
+        }
+        const cost = 1000;
+        if (cash < cost) return { ok: false, msg: "Nicht genug Geld für den Vertragsabschluss." };
+        const sup = SUPPLIERS.find((s) => s.id === supplierId);
+        set({ cash: +(cash - cost).toFixed(2), contracts: [...contracts, supplierId] });
+        useMail.getState().receive({
+          from: sup?.name ?? supplierId,
+          subject: `✅ Stammkunden-Vertrag abgeschlossen`,
+          body:
+            `Herzlichen Glückwunsch!\n\nIhr Stammkunden-Vertrag mit ${sup?.name ?? supplierId} ist jetzt aktiv.\n\n` +
+            `Sie erhalten ab sofort −10 % auf alle Bestellungen bei uns.\n\n` +
+            `Mit freundlichen Grüßen\n${sup?.name ?? supplierId}`,
+          day: get().day,
+          kind: "info",
+        });
+        return { ok: true };
+      },
+
+      cancelContract: (supplierId) => {
+        const { contracts } = get();
+        set({ contracts: contracts.filter((id) => id !== supplierId) });
       },
 
       advanceDay: () => {
@@ -662,13 +779,17 @@ export const useEconomy = create<EconomyState>()(
           // 2) Chargen altern.
           for (const b of list) b.age += 1;
 
-          // 3) Verderb: nur Frischware, deren Alter die Haltbarkeit erreicht.
+          // 3) Verderb: nur Frischware, deren effektive Haltbarkeit (inkl. Kühltheke) erreicht.
           if (p.storage === "frisch" && p.shelfLifeDays) {
+            const shelf = effectiveShelfLife(p, upgrades);
+            const personalFactor = 1 - (upgrades.personal ?? 0) * 0.10;
             const survivors: Batch[] = [];
             for (const b of list) {
-              if (b.age >= p.shelfLifeDays) {
-                stat.spoiled += b.qty;
-                spoiledValue += b.qty * p.ek; // Verlust = bezahlter EK
+              if (b.age >= shelf) {
+                // Mitarbeiter retten einen Teil der verderbenden Ware (bessere Rotation).
+                const actualSpoiled = Math.ceil(b.qty * personalFactor);
+                stat.spoiled += actualSpoiled;
+                spoiledValue += actualSpoiled * p.ek;
               } else {
                 survivors.push(b);
               }
@@ -781,8 +902,24 @@ export const useEconomy = create<EconomyState>()(
         // --- Lieferanten-Ausfall ---------------------------------------------
         const newOutage = maybeSupplierOutage(supplierOutage, day + 1) ?? {};
 
+        // Tageslohn abziehen und per Mail warnen wenn Konto kritisch.
+        const wage = dailyWage(upgrades);
+        const cashAfterSales = +(cash + revenue).toFixed(2);
+        const cashAfter = +(cashAfterSales - wage).toFixed(2);
+        if (wage > 0 && cashAfter < 500) {
+          useMail.getState().receive({
+            from: "Buchhaltung",
+            subject: "⚠️ Kontostand kritisch nach Lohnzahlung",
+            body:
+              `Heute wurden ${euro(wage)} Tageslohn für ${upgrades.personal} Mitarbeiter abgezogen.\n\n` +
+              `Dein Kontostand beträgt jetzt nur noch ${euro(cashAfter)}.\n\n` +
+              `Sorge für ausreichend Einnahmen — oder erwäge, Personal zu reduzieren.`,
+            day: day + 1,
+            kind: "info",
+          });
+        }
+
         // Tages-Datensatz für die Historie (max. 52 Einträge behalten).
-        const cashAfter = +(cash + revenue).toFixed(2);
         const todayRecord: DayRecord = {
           day,
           revenue: +revenue.toFixed(2),
@@ -801,6 +938,7 @@ export const useEconomy = create<EconomyState>()(
           served: unitsSold,
           missedByProduct,
           upgrades,
+          personalBonus: (upgrades.personal ?? 0) * 3, // +3 Punkte Zufriedenheit je Mitarbeiter
         });
 
         const newHistory = [
@@ -812,7 +950,7 @@ export const useEconomy = create<EconomyState>()(
           batches: newBatches,
           stats: newStats,
           offers: newOffers,
-          cash: cashAfter,
+          cash: cashAfter, // nach Umsatz und Lohn
           day: day + 1,
           lastRevenue: +revenue.toFixed(2),
           lastSpoiledValue: +spoiledValue.toFixed(2),
@@ -844,9 +982,10 @@ export const useEconomy = create<EconomyState>()(
     }),
     {
       name: "retail-tycoon-save",
-      version: 6,
+      version: 7,
       migrate: (raw) => {
         const s = (raw ?? {}) as Record<string, unknown>;
+        const rawUpgrades = (s.upgrades ?? {}) as Partial<Upgrades>;
         return {
           started: (s.started as boolean) ?? false,
           mode: (s.mode as GameModeId | null) ?? null,
@@ -855,7 +994,7 @@ export const useEconomy = create<EconomyState>()(
           batches: (s.batches as Record<string, Batch[]>) ?? {},
           stats: (s.stats as Record<string, ProductStat>) ?? {},
           offers: (s.offers as Record<string, Offer>) ?? {},
-          upgrades: (s.upgrades as Upgrades) ?? emptyUpgrades(),
+          upgrades: { ...emptyUpgrades(), ...rawUpgrades },
           lastRevenue: (s.lastRevenue as number) ?? 0,
           lastSpoiledValue: (s.lastSpoiledValue as number) ?? 0,
           satisfaction: (s.satisfaction as number) ?? 80,
@@ -866,6 +1005,7 @@ export const useEconomy = create<EconomyState>()(
           supplierOutage: (s.supplierOutage as Record<string, number>) ?? {},
           history: (s.history as DayRecord[]) ?? [],
           demandedByProduct: (s.demandedByProduct as Record<string, number>) ?? {},
+          contracts: (s.contracts as string[]) ?? [],
           recap: null,
           recapOpen: false,
         };
@@ -889,6 +1029,7 @@ export const useEconomy = create<EconomyState>()(
         supplierOutage: s.supplierOutage,
         history: s.history,
         demandedByProduct: s.demandedByProduct,
+        contracts: s.contracts,
         recap: s.recap,
       }),
     },

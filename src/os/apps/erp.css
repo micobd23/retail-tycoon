@@ -597,3 +597,36 @@
   max-width: 80px;
   transition: width 0.3s;
 }
+
+/* ── Ausbau-Erweiterungen ─────────────────────────────────────────── */
+.ausbau-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #455a64;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin: 0 0 10px;
+}
+.erp-ausbau-card.maxed {
+  opacity: .75;
+  background: #f5f5f5;
+}
+.ausbau-maxed {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2e7d32;
+  margin-top: 8px;
+}
+
+/* ── Eigenmarken-Badge ────────────────────────────────────────────── */
+.erp-eigenmarke {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #4a148c;
+  background: #ede7f6;
+  border: 1px solid #ce93d8;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
