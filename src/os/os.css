@@ -1,0 +1,288 @@
+/* ---------- RetailOS: Fake-Betriebssystem über der Spielwelt ---------- */
+
+.os-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto; /* OS fängt Klicks ab (anders als das HUD) */
+  z-index: 100;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+/* Desktop-Hintergrund */
+.os-desktop {
+  position: absolute;
+  inset: 0 0 44px 0; /* unten Platz für die Taskbar */
+  background: linear-gradient(135deg, #1b3a4b 0%, #2c5364 100%);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-content: flex-start;
+}
+
+/* Desktop-Icons */
+.os-icon {
+  width: 92px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 4px;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.os-icon:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.os-icon-glyph {
+  font-size: 34px;
+  line-height: 1;
+  position: relative;
+}
+.os-badge {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e53935;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.os-icon-label {
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Fenster */
+.os-window {
+  position: absolute;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 280px;
+}
+.os-window-header {
+  height: 38px;
+  background: #263238;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 14px;
+  cursor: grab;
+  flex: 0 0 auto;
+}
+.os-window-header:active {
+  cursor: grabbing;
+}
+.os-window.maximized {
+  border-radius: 0;
+}
+.os-window-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.os-window-buttons {
+  display: flex;
+  gap: 4px;
+}
+.os-window-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.os-window-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.os-window-close:hover {
+  background: #e53935;
+}
+.os-window-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: #fff;
+  color: #263238;
+}
+
+/* Taskbar */
+.os-taskbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 44px;
+  background: rgba(20, 30, 36, 0.96);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  color: #fff;
+}
+.os-brand {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #4fc3f7;
+}
+.os-task-list {
+  display: flex;
+  gap: 6px;
+  flex: 1 1 auto;
+}
+.os-task {
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.os-task:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.os-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  opacity: 0.9;
+}
+.os-newgame {
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  color: #fff;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.os-newgame:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.os-leave {
+  background: #e53935;
+  border: none;
+  color: #fff;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.os-leave:hover {
+  background: #c62828;
+}
+
+/* ---------- gemeinsame App-Inhalte ---------- */
+.app-pad {
+  padding: 16px;
+}
+.app-placeholder {
+  text-align: center;
+  padding: 24px 16px;
+  color: #455a64;
+}
+.app-placeholder-icon {
+  font-size: 46px;
+  margin-bottom: 6px;
+}
+.app-placeholder h3 {
+  margin-bottom: 8px;
+  color: #263238;
+}
+.app-placeholder p {
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 360px;
+  margin: 0 auto 8px;
+}
+.app-soon {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  background: #fff3e0;
+  color: #e65100;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+/* Browser-Leiste */
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #eceff1;
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 12px;
+}
+.browser-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #b0bec5;
+}
+.browser-url {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #607d8b;
+  background: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  flex: 1;
+}
+
+/* ERP-Vorschau-Tabelle */
+.erp-title {
+  color: #263238;
+  margin-bottom: 6px;
+}
+.erp-intro {
+  font-size: 13px;
+  color: #546e7a;
+  margin-bottom: 14px;
+}
+.erp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.erp-table th,
+.erp-table td {
+  text-align: right;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eceff1;
+}
+.erp-table th:first-child,
+.erp-table td:first-child {
+  text-align: left;
+}
+.erp-table thead th {
+  color: #607d8b;
+  font-weight: 600;
+  border-bottom: 2px solid #cfd8dc;
+}
+.erp-strong {
+  font-weight: 700;
+  color: #2e7d32;
+}

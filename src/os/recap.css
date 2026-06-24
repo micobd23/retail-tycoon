@@ -1,0 +1,208 @@
+/* Vollbild-Tagesabschluss ------------------------------------------------- */
+.recap-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 9999; /* über Fenstern UND Taskbar */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 30, 40, 0.55);
+  backdrop-filter: blur(3px);
+  animation: recap-fade 0.18s ease-out;
+}
+@keyframes recap-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.recap-card {
+  width: min(560px, 92%);
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  padding: 28px 30px 22px;
+  animation: recap-pop 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes recap-pop {
+  from { transform: scale(0.94) translateY(8px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.recap-head {
+  text-align: center;
+  margin-bottom: 22px;
+}
+.recap-kicker {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #1e88e5;
+  background: #e3f2fd;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+.recap-title {
+  margin: 12px 0 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: #263238;
+}
+
+/* Kennzahlen-Kacheln */
+.recap-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.recap-tile {
+  background: #f7f9fb;
+  border: 1px solid #eceff1;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.recap-tile-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #78909c;
+}
+.recap-tile-value {
+  font-size: 26px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.recap-tile-value.cash { color: #2e7d32; }
+.recap-tile-value.loss { color: #c62828; }
+.recap-tile-value.neutral { color: #263238; }
+.recap-tile-value.muted { color: #90a4ae; }
+.recap-tile-delta {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.recap-tile-delta.up { color: #2e7d32; }
+.recap-tile-delta.down { color: #c62828; }
+.recap-tile-delta.flat { color: #b0bec5; }
+
+/* Highlight-Zeilen */
+.recap-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.recap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #fafbfc;
+  border: 1px solid #eceff1;
+  border-radius: 10px;
+}
+.recap-row-label {
+  font-size: 13px;
+  color: #546e7a;
+  font-weight: 600;
+}
+.recap-row-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #263238;
+}
+
+/* Kundenzufriedenheit */
+.recap-sat {
+  margin-bottom: 14px;
+}
+.recap-sat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.recap-sat-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #546e7a;
+}
+.recap-sat-pct {
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.recap-sat-pct small {
+  font-size: 12px;
+  font-weight: 700;
+}
+.recap-sat-bar {
+  height: 12px;
+  background: #eceff1;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.recap-sat-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.recap-sat-missed {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #c62828;
+}
+
+/* Kundenstimmen */
+.recap-voices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+.recap-voice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+.recap-voice.good {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+.recap-voice.bad {
+  background: #fbe9e7;
+  color: #c62828;
+}
+.recap-voice-icon {
+  font-size: 16px;
+}
+
+.recap-btn {
+  width: 100%;
+  background: #1e88e5;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.recap-btn:hover {
+  background: #1565c0;
+}
+.recap-hint {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: #b0bec5;
+}
