@@ -74,6 +74,41 @@
   line-height: 1.35;
 }
 
+.start-firm-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.start-firm-label {
+  font-size: 14px;
+  color: #90a4ae;
+  white-space: nowrap;
+}
+
+.start-firm-input {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(79, 195, 247, 0.4);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 8px 14px;
+  width: 240px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.start-firm-input:focus {
+  border-color: #4fc3f7;
+  background: rgba(79, 195, 247, 0.12);
+}
+.start-firm-input::placeholder {
+  color: #546e7a;
+  font-weight: 400;
+}
+
 .start-hint {
   margin-top: 26px;
   font-size: 13px;

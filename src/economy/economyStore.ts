@@ -15,6 +15,7 @@ import {
 } from "./catalog";
 import { useMail } from "./mailStore";
 import { useGoal } from "./goalStore";
+import { useCompetitor } from "./competitorStore";
 
 // --- Spielmodi (nur unterschiedliches Startbudget) -----------------------
 export type GameModeId =
@@ -218,8 +219,11 @@ interface EconomyState {
   demandedByProduct: Record<string, number>;
   // Stammkunden-Verträge: Liste der Lieferanten-IDs mit aktivem Vertrag (max. 2).
   contracts: string[];
+  // Name des Supermarkts — wird auf dem Startscreen gesetzt.
+  firmName: string;
 
-  startGame: (id: GameModeId) => void;
+  startGame: (id: GameModeId, name?: string) => void;
+  setFirmName: (name: string) => void;
   resetGame: () => void;
   buy: (productId: string, qty: number, supplierId: string) => { ok: boolean; msg?: string };
   upgrade: (track: UpgradeTrack) => { ok: boolean; msg?: string };
@@ -540,14 +544,17 @@ export const useEconomy = create<EconomyState>()(
       history: [],
       demandedByProduct: {},
       contracts: [],
+      firmName: "",
 
-      startGame: (id) => {
+      startGame: (id, name) => {
         const mode = MODES.find((m) => m.id === id);
         if (!mode) return;
+        const firm = name?.trim() || "Mein Supermarkt";
         const offers = seedOffers();
         set({
           started: true,
           mode: id,
+          firmName: firm,
           cash: mode.budget,
           day: 1,
           batches: {},
@@ -569,6 +576,9 @@ export const useEconomy = create<EconomyState>()(
           contracts: [],
         });
 
+        // Konkurrenten zurücksetzen.
+        useCompetitor.getState().resetCompetitors();
+
         // Ziele und Postfach frisch aufsetzen.
         useGoal.getState().reset();
         useGoal.getState().generateGoals("Frühling", 1);
@@ -576,9 +586,9 @@ export const useEconomy = create<EconomyState>()(
         mail.clearAll();
         mail.receive({
           from: "Zentrale",
-          subject: "Willkommen als Einkaufsleiter!",
+          subject: `Willkommen bei ${firm}!`,
           body:
-            `Herzlich willkommen!\n\nDein Startkapital beträgt ${euro(mode.budget)}. ` +
+            `Herzlich willkommen bei ${firm}!\n\nDein Startkapital beträgt ${euro(mode.budget)}. ` +
             `Deine Aufgabe: das Lager klug füllen und Gewinn machen — Marge × Drehzahl.\n\n` +
             `Achte auf Lagerplatz (Lager für Trockenware, Verkaufsfläche für Frischware) ` +
             `und auf die Haltbarkeit der Frischware. Viel Erfolg!`,
@@ -588,12 +598,16 @@ export const useEconomy = create<EconomyState>()(
         for (const [pid, o] of Object.entries(offers)) offerMail(pid, o, 1);
       },
 
+      setFirmName: (name) => set({ firmName: name }),
+
       resetGame: () => {
         useGoal.getState().reset();
         useMail.getState().clearAll();
+        useCompetitor.getState().resetCompetitors();
         set({
           started: false,
           mode: null,
+          firmName: "",
           cash: 0,
           day: 1,
           batches: {},
@@ -735,6 +749,11 @@ export const useEconomy = create<EconomyState>()(
         const { batches, stats, cash, day, offers, upgrades, lastRevenue, satisfaction,
           supplierMods, seasonEvent, supplierOutage, history, demandedByProduct } = get();
         const { season, seasonDay } = dayToCalendar(day);
+
+        // Konkurrenten für diesen Tag ticken lassen (Stärke + Nachrichten).
+        useCompetitor.getState().advance(day);
+        // Marktdruck: Konkurrenten reduzieren die effektive Nachfrage leicht (max. 12 %).
+        const competitorPressure = useCompetitor.getState().marketPressure();
         const newBatches: Record<string, Batch[]> = {};
         const newStats: Record<string, ProductStat> = { ...stats };
         const newDemandedByProduct: Record<string, number> = { ...demandedByProduct };
@@ -752,7 +771,9 @@ export const useEconomy = create<EconomyState>()(
 
           // 1) Verkauf nach Nachfrage (inkl. Saison, Welle, Trend, Event), FIFO.
           let soldThis = 0;
-          const demand = effectiveSales(p, upgrades, satisfaction, season, seasonDay);
+          const demand = Math.floor(
+            effectiveSales(p, upgrades, satisfaction, season, seasonDay) * (1 - competitorPressure),
+          );
           const stock = list.reduce((s, b) => s + b.qty, 0);
           demandedTotal += demand;
           newDemandedByProduct[p.id] = (newDemandedByProduct[p.id] ?? 0) + demand;
@@ -1006,13 +1027,14 @@ export const useEconomy = create<EconomyState>()(
     }),
     {
       name: "retail-tycoon-save",
-      version: 7,
+      version: 8,
       migrate: (raw) => {
         const s = (raw ?? {}) as Record<string, unknown>;
         const rawUpgrades = (s.upgrades ?? {}) as Partial<Upgrades>;
         return {
           started: (s.started as boolean) ?? false,
           mode: (s.mode as GameModeId | null) ?? null,
+          firmName: (s.firmName as string) ?? "",
           cash: (s.cash as number) ?? 0,
           day: (s.day as number) ?? 1,
           batches: (s.batches as Record<string, Batch[]>) ?? {},
@@ -1037,6 +1059,7 @@ export const useEconomy = create<EconomyState>()(
       partialize: (s) => ({
         started: s.started,
         mode: s.mode,
+        firmName: s.firmName,
         cash: s.cash,
         day: s.day,
         batches: s.batches,

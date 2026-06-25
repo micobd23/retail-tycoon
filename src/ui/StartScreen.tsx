@@ -1,12 +1,13 @@
+import { useState } from "react";
 import { useEconomy, MODES } from "../economy/economyStore";
 import { euro } from "../economy/catalog";
 import "./startscreen.css";
 
-// Startbildschirm: Spieler wählt einen Modus -> setzt das Startbudget.
-// Wird automatisch ausgeblendet, sobald ein Spiel läuft (started === true).
+// Startbildschirm: Spieler gibt Firmennamen ein und wählt einen Modus.
 export function StartScreen() {
   const started = useEconomy((s) => s.started);
   const startGame = useEconomy((s) => s.startGame);
+  const [firmInput, setFirmInput] = useState("Mein Supermarkt");
 
   if (started) return null;
 
@@ -16,7 +17,26 @@ export function StartScreen() {
         <h1 className="start-title">🛒 Retail Tycoon</h1>
         <p className="start-sub">
           Du bist Einkäufer eines Supermarkts. Kaufe klug ein, halte das Lager
-          voll und mach Gewinn. Wähle deinen Schwierigkeitsgrad:
+          voll und mach Gewinn.
+        </p>
+
+        <div className="start-firm-row">
+          <label className="start-firm-label" htmlFor="firm-name">
+            Firmenname
+          </label>
+          <input
+            id="firm-name"
+            className="start-firm-input"
+            type="text"
+            maxLength={32}
+            value={firmInput}
+            onChange={(e) => setFirmInput(e.target.value)}
+            placeholder="Mein Supermarkt"
+          />
+        </div>
+
+        <p className="start-sub" style={{ marginTop: 0, marginBottom: 24 }}>
+          Wähle deinen Schwierigkeitsgrad:
         </p>
 
         <div className="mode-grid">
@@ -24,7 +44,7 @@ export function StartScreen() {
             <button
               key={m.id}
               className="mode-tile"
-              onClick={() => startGame(m.id)}
+              onClick={() => startGame(m.id, firmInput)}
             >
               <span className="mode-emoji">{m.emoji}</span>
               <span className="mode-name">{m.name}</span>

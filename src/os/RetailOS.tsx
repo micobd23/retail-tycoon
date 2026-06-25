@@ -42,6 +42,7 @@ export function RetailOS() {
 
   const dayRunning = useOS((s) => s.dayRunning);
   const resetGame = useEconomy((s) => s.resetGame);
+  const firmName = useEconomy((s) => s.firmName);
   const unread = useMail((s) => unreadCount(s.mails));
 
   // PC verlassen -> Welt in Phaser wieder freigeben.
@@ -114,7 +115,9 @@ export function RetailOS() {
 
       {/* Taskbar unten */}
       <div className="os-taskbar">
-        <span className="os-brand">RetailOS</span>
+        <span className="os-brand">
+          {firmName ? `${firmName} · ` : ""}RetailOS
+        </span>
         <div className="os-task-list">
           {windows.map((w) => (
             <button
