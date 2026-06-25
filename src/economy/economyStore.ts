@@ -971,6 +971,18 @@ export const useEconomy = create<EconomyState>()(
           personalBonus: (upgrades.personal ?? 0) * 3,
         });
 
+        // Konkurrenz-Reaktion prüfen: wenn Spieler stark, reagiert ein Konkurrent per Mail.
+        const reaction = useCompetitor.getState().checkReaction(+revenue.toFixed(2), newSat, day);
+        if (reaction) {
+          useMail.getState().receive({
+            from: reaction.competitor.name,
+            subject: reaction.mailSubject,
+            body: reaction.mailBody,
+            day: day + 1,
+            kind: "info",
+          });
+        }
+
         const newHistory = [
           ...history.slice(-51),
           { ...todayRecord, satisfaction: newSat },

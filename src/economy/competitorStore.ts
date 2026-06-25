@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 
 // ---------------------------------------------------------------------------
 // Konkurrenten — 3 Mitbewerber laufen passiv neben dem Spieler.
-// Keine direkte Interaktion (kommt später); nur Marktdruck + Browser-Berichte.
+// Keine direkte Interaktion (kommt später); Marktdruck + Browser-Berichte.
 // ---------------------------------------------------------------------------
 
 export interface CompetitorNews {
@@ -18,6 +18,14 @@ export interface Competitor {
   type: "discounter" | "bio";
   strategy: "expansion" | "volume" | "quality";
   strength: number; // 0–100
+}
+
+// Rückgabe von checkReaction — economyStore sendet die Mail damit
+export interface ReactionResult {
+  competitor: Competitor;
+  newsText: string;
+  mailSubject: string;
+  mailBody: string;
 }
 
 // Vorgeschriebene Nachrichten je Konkurrent (erscheinen ab diesem Tag)
@@ -44,12 +52,40 @@ const SCRIPTED_NEWS: CompetitorNews[] = [
   { day: 38, competitorId: "naturpur", text: "NaturPur: Kundenzufriedenheit übersteigt den Branchendurchschnitt deutlich." },
 ];
 
+// Reaktions-Texte je Konkurrent (wenn Spieler gut läuft)
+const REACTION_TEXT: Record<string, { news: string; subject: string; body: string }> = {
+  sparfuchs: {
+    news: "Sparfuchs bemerkt euren Erfolg und verschärft die Preispolitik — ein direkter Angriff.",
+    subject: "⚔️ Sparfuchs reagiert auf eure Stärke",
+    body:
+      "Eure starken Umsätze sind nicht unbemerkt geblieben.\n\n" +
+      "Sparfuchs hat reagiert: aggressivere Preise, mehr Sonderangebote, höherer Druck auf eure Kundschaft.\n\n" +
+      "Behalte die Konkurrenz im Auge — und bleib stark!",
+  },
+  preisland: {
+    news: "Preisland weitet Sortiment aus — als direkte Reaktion auf eure Marktgewinne.",
+    subject: "⚔️ Preisland legt nach — inspiriert von euch",
+    body:
+      "Preisland hat eure Zahlen gesehen und reagiert.\n\n" +
+      "Das Sortiment wird ausgeweitet, mehr Kapazität aufgebaut — Preisland will euren Erfolg aufholen.\n\n" +
+      "Stetiger Druck, aber du hast den Vorsprung. Nutze ihn!",
+  },
+  naturpur: {
+    news: "NaturPur verstärkt Marketing gezielt bei Bio-Kunden — als Antwort auf eure Erfolge.",
+    subject: "⚔️ NaturPur reagiert mit Qualitätsoffensive",
+    body:
+      "NaturPur hat eure Kundenzufriedenheit registriert und zieht nach.\n\n" +
+      "Verstärktes Bio-Marketing, neue Premium-Kooperationen — NaturPur kämpft um die Qualitätskunden.\n\n" +
+      "Gerade bei Frischware lohnt es sich, dein Niveau zu halten!",
+  },
+};
+
 // Stärke-Wachstum je Strategie (deterministisch — kein Zufallsrauschen für Stabilität)
 function computeStrength(strategy: Competitor["strategy"], day: number): number {
   switch (strategy) {
-    case "expansion": return Math.min(78, day * 3.0);             // schnell, Plateau ~Tag 26
-    case "volume":    return Math.min(68, day * 1.6);             // linear, langsam, hört nie auf
-    case "quality":   return Math.min(72, Math.max(0, (day - 8) * 2.8)); // langsamer Start, dann zieht an
+    case "expansion": return Math.min(78, day * 3.0);
+    case "volume":    return Math.min(68, day * 1.6);
+    case "quality":   return Math.min(72, Math.max(0, (day - 8) * 2.8));
   }
 }
 
@@ -62,8 +98,11 @@ const INITIAL_COMPETITORS: Competitor[] = [
 interface CompetitorState {
   competitors: Competitor[];
   visibleNews: CompetitorNews[];
+  lastReactionDay: number; // verhindert zu häufige Reaktionen
   advance: (day: number) => void;
+  checkReaction: (revenue: number, satisfaction: number, day: number) => ReactionResult | null;
   marketPressure: () => number; // 0–0.12 Reduktion des Kundenstroms
+  playerStrength: (lastRevenue: number) => number; // für Marktanteil-Berechnung
   resetCompetitors: () => void;
 }
 
@@ -72,6 +111,7 @@ export const useCompetitor = create<CompetitorState>()(
     (set, get) => ({
       competitors: INITIAL_COMPETITORS.map((c) => ({ ...c })),
       visibleNews: [],
+      lastReactionDay: 0,
 
       advance: (day: number) => {
         set((s) => {
@@ -91,6 +131,44 @@ export const useCompetitor = create<CompetitorState>()(
         });
       },
 
+      checkReaction: (revenue: number, satisfaction: number, day: number) => {
+        const { competitors, lastReactionDay } = get();
+        // Bedingung: guter Spieler, Konkurrenz hat genug Stärke, nicht zu früh nach letzter Reaktion
+        const cooldown = day - lastReactionDay >= 10;
+        const playerGood = revenue > 800 && satisfaction >= 78;
+        const candidates = competitors.filter((c) => c.strength >= 15);
+        if (!cooldown || !playerGood || candidates.length === 0) return null;
+
+        // Reaktion: der stärkste Konkurrent reagiert zuerst
+        const reactor = [...candidates].sort((a, b) => b.strength - a.strength)[0];
+        const texts = REACTION_TEXT[reactor.id];
+        if (!texts) return null;
+
+        // Stärke-Boost: +12 über das normale Wachstum (bleibt bis zum nächsten advance überschrieben)
+        // Wir speichern einen einmaligen Reaktions-Bonus im news-Feed als Marker
+        const reactionNews: CompetitorNews = {
+          day,
+          text: texts.news,
+          competitorId: reactor.id,
+        };
+        set((s) => ({
+          lastReactionDay: day,
+          competitors: s.competitors.map((c) =>
+            c.id === reactor.id
+              ? { ...c, strength: Math.min(100, c.strength + 12) }
+              : c,
+          ),
+          visibleNews: [reactionNews, ...s.visibleNews].slice(0, 30),
+        }));
+
+        return {
+          competitor: reactor,
+          newsText: texts.news,
+          mailSubject: texts.subject,
+          mailBody: texts.body,
+        };
+      },
+
       marketPressure: () => {
         const { competitors } = get();
         const totalStrength = competitors.reduce((sum, c) => sum + c.strength, 0);
@@ -98,18 +176,25 @@ export const useCompetitor = create<CompetitorState>()(
         return (totalStrength / 218) * 0.12;
       },
 
+      playerStrength: (lastRevenue: number) => {
+        // ~600 €/Tag = solider Mittelspieler → Stärke 50
+        return Math.min(100, Math.max(5, (lastRevenue / 600) * 50));
+      },
+
       resetCompetitors: () =>
         set({
           competitors: INITIAL_COMPETITORS.map((c) => ({ ...c })),
           visibleNews: [],
+          lastReactionDay: 0,
         }),
     }),
     {
       name: "retail-tycoon-competitors",
-      version: 1,
+      version: 2,
       migrate: () => ({
         competitors: INITIAL_COMPETITORS.map((c) => ({ ...c })),
         visibleNews: [],
+        lastReactionDay: 0,
       }),
     },
   ),
