@@ -365,3 +365,14 @@ export function cheapestSupplier(p: Product, unlockedSuppliers?: string[]): stri
 export function euro(n: number): string {
   return n.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 }
+
+
+export interface DayRecord {
+  day: number;
+  revenue: number;
+  spoiledValue: number;
+  unitsSold: number;
+  demandedTotal: number;
+  satisfaction: number;
+  cash: number;
+}

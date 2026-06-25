@@ -11,6 +11,7 @@ import {
   dayToCalendar,
   type Product,
   type Season,
+  type DayRecord,
 } from "./catalog";
 import { useMail } from "./mailStore";
 import { useGoal } from "./goalStore";
@@ -64,16 +65,8 @@ export interface CustomerVoice {
   good: boolean;
 }
 
-// Tageseintrag für die Verlaufshistorie (max. 52 Tage = 1 Jahr).
-export interface DayRecord {
-  day: number;
-  revenue: number;
-  spoiledValue: number;
-  unitsSold: number;
-  demandedTotal: number;
-  satisfaction: number;
-  cash: number; // Kassenstand nach dem Tag
-}
+// DayRecord: in catalog.ts definiert (von goalStore + economyStore genutzt, kein Zirkel)
+export type { DayRecord };
 
 // Zusammenfassung eines abgeschlossenen Tages -> für den Vollbild-Recap.
 export interface DayRecap {
