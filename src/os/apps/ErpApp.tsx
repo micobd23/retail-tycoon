@@ -13,6 +13,8 @@ import {
   type Upgrades,
   type UpgradeTrack,
 } from "../../economy/economyStore";
+import { useGoal } from "../../economy/goalStore";
+import { ZieleTab } from "./ZieleTab";
 import {
   CATALOG,
   SUPPLIERS,
@@ -55,7 +57,7 @@ const empfMenge = (p: Product, u: Upgrades) =>
     ? effectiveSales(p, u) * effectiveShelfLife(p, u)
     : null;
 
-type Tab = "einkauf" | "statistik" | "ausbau";
+type Tab = "einkauf" | "statistik" | "ausbau" | "ziele";
 
 export function ErpApp() {
   const [tab, setTab] = useState<Tab>("einkauf");
@@ -67,6 +69,9 @@ export function ErpApp() {
   const satisfaction = useEconomy((s) => s.satisfaction);
   const batches = useEconomy((s) => s.batches);
   const upgrades = useEconomy((s) => s.upgrades);
+
+  const goals = useGoal((s) => s.goals);
+  const goalsDone = goals.filter((g) => g.done).length;
 
   const cal = dayToCalendar(day);
 
@@ -134,6 +139,22 @@ export function ErpApp() {
           cap={cap.frisch}
         />
 
+        {goals.length > 0 && (
+          <button
+            className="erp-stat erp-ziele-badge"
+            onClick={() => setTab("ziele")}
+            title="Saisonziele öffnen"
+          >
+            <span className="erp-stat-label">🎯 Saisonziele</span>
+            <span
+              className="erp-stat-value"
+              style={{ color: goalsDone === goals.length ? "#2e7d32" : "#455a64" }}
+            >
+              {goalsDone}/{goals.length}
+            </span>
+          </button>
+        )}
+
         <button className="erp-day-btn" onClick={handleDay}>
           Tag weiter ▶
         </button>
@@ -159,6 +180,17 @@ export function ErpApp() {
         >
           🏗️ Ausbau
         </button>
+        <button
+          className={"erp-tab" + (tab === "ziele" ? " active" : "")}
+          onClick={() => setTab("ziele")}
+        >
+          🎯 Ziele{goalsDone > 0 && goalsDone < goals.length && (
+            <span className="erp-tab-badge">{goalsDone}</span>
+          )}
+          {goals.length > 0 && goalsDone === goals.length && (
+            <span className="erp-tab-badge done">✓</span>
+          )}
+        </button>
       </div>
 
       {msg && tab === "einkauf" && <div className="erp-msg">{msg}</div>}
@@ -166,6 +198,7 @@ export function ErpApp() {
       {tab === "einkauf" && <EinkaufView setMsg={setMsg} />}
       {tab === "statistik" && <StatistikView />}
       {tab === "ausbau" && <AusbauView />}
+      {tab === "ziele" && <ZieleTab />}
     </div>
   );
 }

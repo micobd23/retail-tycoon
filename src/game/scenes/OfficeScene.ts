@@ -33,8 +33,8 @@ const COLORS = {
   deskTop: 0xa1887f, // Tischplatte-Highlight
   pc: 0x263238, // Monitor: fast schwarz
   pcScreen: 0x4fc3f7, // Bildschirm: hellblau
-  shelf: 0x90a4ae, // Regal: grau
-  shelfEdge: 0x607d8b, // Regal-Kante
+  shelf: 0xa1887f, // Regal: Holz warm
+  shelfEdge: 0x6d4c41, // Regal-Kante dunkel
   counter: 0x607d8b, // Kasse: blaugrau
   counterTop: 0x78909c, // Kassen-Highlight
   goodsDry: 0xffb74d, // Trockenware im Lager: warmes Amber
@@ -90,8 +90,9 @@ type Solid = { x: number; y: number; w: number; h: number; color: number };
 export class OfficeScene extends Phaser.Scene {
   // Physik-Körper des Spielers (unsichtbar) — trägt Kollision & Bewegung.
   private player!: Phaser.GameObjects.Rectangle;
-  // Sichtbare Figur, die dem Körper folgt (Schatten, Beine, Shirt, Kopf …).
-  private avatar!: Phaser.GameObjects.Container;
+  // Sichtbare Figur: Pixel-Art-Sprite + weicher Schatten darunter.
+  private avatarSprite!: Phaser.GameObjects.Image;
+  private avatarShadow!: Phaser.GameObjects.Ellipse;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private keys!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
   private solids!: Phaser.Physics.Arcade.StaticGroup;
@@ -127,6 +128,14 @@ export class OfficeScene extends Phaser.Scene {
     super("OfficeScene");
   }
 
+  preload() {
+    this.load.spritesheet('rpg', 'assets/roguelikeSheet_transparent.png', {
+      frameWidth: 16,
+      frameHeight: 16,
+      spacing: 1,
+    });
+  }
+
   create() {
     const worldW = 30 * TILE; // 1200
     const worldH = 20 * TILE; // 800
@@ -139,6 +148,7 @@ export class OfficeScene extends Phaser.Scene {
     this.solids = this.physics.add.staticGroup();
     this.buildWalls();
     this.buildFurniture();
+    this.createSpriteTextures(); // Pixel-Art-Texturen erzeugen
     this.buildAvatar();
 
     // --- Spieler-Physik (unsichtbarer Körper) ---
@@ -440,33 +450,33 @@ export class OfficeScene extends Phaser.Scene {
 
   // Sichtbare Figur an die Position des Physik-Körpers setzen.
   private syncAvatar(left = false, right = false) {
-    if (!this.avatar) return;
-    this.avatar.setPosition(this.player.x, this.player.y);
-    // Nach links laufen -> Figur leicht spiegeln (kleiner Lebendigkeits-Effekt).
-    if (left) this.avatar.setScale(-1, 1);
-    else if (right) this.avatar.setScale(1, 1);
+    if (!this.avatarSprite) return;
+    this.avatarSprite.setPosition(this.player.x, this.player.y);
+    this.avatarShadow.setPosition(this.player.x, this.player.y + 14);
+    // Nach links laufen -> Sprite spiegeln.
+    if (left) this.avatarSprite.setScale(-2, 2);
+    else if (right) this.avatarSprite.setScale(2, 2);
   }
 
   // --- Hilfsfunktionen ---------------------------------------------------
 
   private drawFloors() {
-    // Böden als große farbige Rechtecke (kein Hindernis).
-    const floor = (
-      x: number,
-      y: number,
-      w: number,
-      h: number,
-      color: number,
-    ) =>
-      this.add
-        .rectangle(x * TILE, y * TILE, w * TILE, h * TILE, color)
+    // Kenney-RPG-Tiles als Boden: Frame 10 = warme Holzdielen (Büro),
+    // Frame 122 = heller Naturstein (Lager / Flur / Verkauf).
+    const S = TILE / 16; // Skalierung: 16-px-Tile → 40-px-TILE = 2.5
+    const tileFloor = (x: number, y: number, w: number, h: number, frame: number) => {
+      const ts = this.add
+        .tileSprite(x * TILE, y * TILE, w * TILE, h * TILE, 'rpg', frame)
         .setOrigin(0)
         .setDepth(DEPTH.floor);
+      ts.setTileScale(S, S);
+      return ts;
+    };
 
-    floor(1, 1, 8, 6, COLORS.floorOffice); // Büro (oben links, jetzt kleiner)
-    floor(18, 1, 11, 6, COLORS.floorStorage); // Lager (oben rechts)
-    floor(9, 1, 9, 6, COLORS.floorHall); // Flur (Mitte, oberes Band)
-    floor(1, 7, 28, 12, COLORS.floorShop); // Verkauf (unten, jetzt viel größer)
+    tileFloor(1,  1,  8,  6,   9); // Büro: Frame 9
+    tileFloor(18, 1, 11,  6, 122); // Lager: heller Stein
+    tileFloor(9,  1,  9,  6, 122); // Flur: heller Stein
+    tileFloor(1,  7, 28, 12, 122); // Verkauf: heller Stein
   }
 
   // Dezentes Fliesen-Raster über den ganzen Boden — gibt Größe & Tiefe.
@@ -522,7 +532,11 @@ export class OfficeScene extends Phaser.Scene {
   private buildFurniture() {
     // --- Büro: Schreibtisch + PC + Sofa + Pflanze ---
     this.addShadow(3, 2.5, 3, 1.2);
-    this.addSolid({ x: 3, y: 2.5, w: 3, h: 1.2, color: COLORS.desk }); // Schreibtisch
+    this.addSolid({ x: 3, y: 2.5, w: 3, h: 1.2, color: COLORS.desk }).setVisible(false);
+    const deskTs = this.add
+      .tileSprite(3 * TILE, 2.5 * TILE, 3 * TILE, 1.2 * TILE, 'rpg', 353)
+      .setOrigin(0).setDepth(DEPTH.furniture);
+    deskTs.setTileScale(TILE / 16, (1.2 * TILE) / 16);
     // Hellere Tischplatten-Kante (oben)
     this.add
       .rectangle(3 * TILE, 2.5 * TILE, 3 * TILE, 0.35 * TILE, COLORS.deskTop)
@@ -544,13 +558,13 @@ export class OfficeScene extends Phaser.Scene {
 
     // Sofa mit zwei Kissen
     this.addShadow(6, 5, 2, 0.9);
-    this.addSolid({ x: 6, y: 5, w: 2, h: 0.9, color: 0x90a4ae }); // Sofa-Korpus
+    this.addSolid({ x: 6, y: 5, w: 2, h: 0.9, color: 0x5d4037 }); // Sofa-Korpus dunkelbraun
     this.add
-      .rectangle(6.1 * TILE, 5.12 * TILE, 0.85 * TILE, 0.66 * TILE, 0xb0bec5)
+      .rectangle(6.1 * TILE, 5.12 * TILE, 0.85 * TILE, 0.66 * TILE, 0x8d6e63)
       .setOrigin(0)
       .setDepth(DEPTH.furniture);
     this.add
-      .rectangle(7.05 * TILE, 5.12 * TILE, 0.85 * TILE, 0.66 * TILE, 0xb0bec5)
+      .rectangle(7.05 * TILE, 5.12 * TILE, 0.85 * TILE, 0.66 * TILE, 0x8d6e63)
       .setOrigin(0)
       .setDepth(DEPTH.furniture);
 
@@ -591,39 +605,74 @@ export class OfficeScene extends Phaser.Scene {
     ];
   }
 
-  // Die sichtbare Spielfigur als Container aus einfachen Formen.
-  // (Beim Kenney-Umbau: hier statt der Formen ein Sprite + Animationen setzen.)
-  private buildAvatar() {
-    const parts: Phaser.GameObjects.GameObject[] = [];
-    // weicher Schatten unter den Füßen
-    parts.push(this.add.ellipse(0, 16, 30, 11, COLORS.shadow, 0.14));
-    // Beine
-    parts.push(this.add.rectangle(-5, 10, 7, 12, COLORS.legs));
-    parts.push(this.add.rectangle(5, 10, 7, 12, COLORS.legs));
-    // Körper / Shirt
-    const shirt = this.add.rectangle(0, 2, 24, 22, COLORS.shirt);
-    shirt.setStrokeStyle(2, COLORS.shirtEdge);
-    parts.push(shirt);
-    // Kopf
-    const head = this.add.circle(0, -14, 11, COLORS.skin);
-    head.setStrokeStyle(1.5, COLORS.skinEdge);
-    parts.push(head);
-    // Haare (Halbkreis oben auf dem Kopf)
-    const hair = this.add.arc(0, -14, 11, 180, 360, false, COLORS.hair);
-    parts.push(hair);
-    // Augen
-    parts.push(this.add.circle(-4, -13, 1.6, 0x37474f));
-    parts.push(this.add.circle(4, -13, 1.6, 0x37474f));
+  // Pixel-Art-Texturen für Spieler + Kunden einmalig erzeugen.
+  private createSpriteTextures() {
+    if (this.textures.exists('spr-player')) return; // HMR-Guard
 
-    this.avatar = this.add
-      .container(4 * TILE, 5.5 * TILE, parts)
+    // Pixel-Art-Karte: 12 × 20 px (bei Skala 2 → 24 × 40 px auf dem Bildschirm)
+    // H=Haare, S=Haut, E=Auge, B=Shirt, b=Shirt-Schatten, G=Hose, g=Schuh
+    const GRID = [
+      '00HHHHHHHH00',
+      '0HHHHHHHHHH0',
+      '0HSSSSSSSSSH', // führt zu 11 Zeichen — Korrektur unten
+      '0HESSHSSESH0',
+      '0HSSSSSSSSSH',
+      '00BBBBBBBBB0',
+      '0bBBBBBBBBBb',
+      'bBBBBBBBBBBb',
+      'bBBBBBBBBBBb',
+      'bBBBBBBBBBBb',
+      'bBBBBBBBBBBb',
+      '0bBBBBBBBBb0',
+      '00BBBBBBBBB0',
+      '0GGGG00GGGG0',
+      '0GGGG00GGGG0',
+      '0GGGG00GGGG0',
+      '0GGGG00GGGG0',
+      '0GGGG00GGGG0',
+      '0gGGGggGGGg0',
+      '0gggg00gggg0',
+    ];
+    const PC: Record<string, string> = {
+      H: '#3e2723', S: '#ffcc9c', E: '#263238',
+      B: '#1e88e5', b: '#1565c0',
+      G: '#455a64', g: '#1a1f23',
+    };
+    const W = 12, H = 20;
+    const ct = this.textures.createCanvas('spr-player', W, H)!;
+    const ctx = ct.getContext() as CanvasRenderingContext2D;
+    GRID.forEach((row, y) => {
+      for (let x = 0; x < Math.min(row.length, W); x++) {
+        const c = row[x];
+        if (c === '0') continue;
+        ctx.fillStyle = PC[c] ?? '#ff00ff';
+        ctx.fillRect(x, y, 1, 1);
+      }
+    });
+    ct.refresh();
+  }
+
+  // Spielfigur als Pixel-Art-Sprite (ersetzt den alten Formen-Container).
+  private buildAvatar() {
+    this.avatarShadow = this.add
+      .ellipse(4 * TILE, 5.5 * TILE + 14, 28, 10, 0x000000, 0.13)
+      .setDepth(DEPTH.shadow);
+
+    this.avatarSprite = this.add
+      .image(4 * TILE, 5.5 * TILE, 'spr-player')
+      .setScale(2)
+      .setOrigin(0.5, 0.85) // Füße unten zentriert
       .setDepth(DEPTH.avatar);
   }
 
-  // Eine Kasse: Korpus + heller Streifen + kleines Register-Display.
+  // Eine Kasse: Korpus + Kenney-Sprite + heller Streifen + kleines Register-Display.
   private addCounter(x: number, y: number, w: number, h: number) {
     this.addShadow(x, y, w, h);
-    this.addSolid({ x, y, w, h, color: COLORS.counter });
+    this.addSolid({ x, y, w, h, color: COLORS.counter }).setVisible(false);
+    const cTs = this.add
+      .tileSprite(x * TILE, y * TILE, w * TILE, h * TILE, 'rpg', 353)
+      .setOrigin(0).setDepth(DEPTH.furniture);
+    cTs.setTileScale(TILE / 16, (h * TILE) / 16);
     this.add
       .rectangle(x * TILE, y * TILE, w * TILE, 0.22 * TILE, COLORS.counterTop)
       .setOrigin(0)
@@ -639,7 +688,7 @@ export class OfficeScene extends Phaser.Scene {
       .setDepth(DEPTH.furniture);
   }
 
-  // Ein Regal = Schatten + grauer Korpus (Kollision) + Kante + Fachböden
+  // Ein Regal = Schatten + grauer Korpus (Kollision) + Kenney-Sprite + Kante + Fachböden
   // + farbige Füll-Fläche (zeigt den Bestand).
   private addShelf(
     x: number,
@@ -650,7 +699,17 @@ export class OfficeScene extends Phaser.Scene {
     goodsColor: number,
   ): Shelf {
     this.addShadow(x, y, w, h);
-    this.addSolid({ x, y, w, h, color: COLORS.shelf });
+    this.addSolid({ x, y, w, h, color: COLORS.shelf }).setVisible(false);
+
+    // Kenney-Sprite als Regal-Optik (über Solid, unter der Füll-Fläche)
+    const ts = this.add
+      .tileSprite(x * TILE, y * TILE, w * TILE, h * TILE, 'rpg', 73)
+      .setOrigin(0)
+      .setDepth(DEPTH.furniture);
+    ts.setTileScale(
+      vertical ? (w * TILE) / 16 : TILE / 16,
+      vertical ? TILE / 16 : (h * TILE) / 16,
+    );
 
     // farbige Füll-Fläche (wird in setShelfFill bewegt/skaliert)
     const fill = this.add

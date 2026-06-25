@@ -618,6 +618,40 @@
   margin-top: 8px;
 }
 
+/* ── Ziele-Badge im Tab ───────────────────────────────────────────── */
+.erp-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #1e88e5;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 5px;
+  padding: 0 4px;
+  vertical-align: middle;
+}
+
+.erp-tab-badge.done {
+  background: #2e7d32;
+}
+
+/* Ziele-Shortcut im Header (klickbar wie ein Link) */
+.erp-ziele-badge {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.erp-ziele-badge:hover .erp-stat-value {
+  text-decoration: underline;
+}
+
 /* ── Eigenmarken-Badge ────────────────────────────────────────────── */
 .erp-eigenmarke {
   display: inline-block;

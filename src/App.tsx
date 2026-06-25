@@ -5,8 +5,10 @@ import { EventBus, Events, type InteractionInfo } from "./game/EventBus";
 import { RetailOS } from "./os/RetailOS";
 import { DayHUD } from "./os/DayHUD";
 import { DayRecap } from "./os/DayRecap";
+import { YearEnd } from "./os/YearEnd";
 import { useOS } from "./os/osStore";
 import { useEconomy } from "./economy/economyStore";
+import { useGoal } from "./economy/goalStore";
 import { StartScreen } from "./ui/StartScreen";
 
 export default function App() {
@@ -16,6 +18,7 @@ export default function App() {
 
   const dayRunning = useOS((s) => s.dayRunning);
   const recapOpen = useEconomy((s) => s.recapOpen);
+  const yearEndOpen = useGoal((s) => s.yearEndOpen);
 
   // Phaser nur einmal starten (auch bei React StrictMode-Doppel-Mount).
   useEffect(() => {
@@ -71,6 +74,9 @@ export default function App() {
 
       {/* Vollbild-Tagesabschluss (über allem) */}
       {recapOpen && <DayRecap />}
+
+      {/* Jahresabschluss (erscheint nach dem Recap des letzten Tages) */}
+      {!recapOpen && yearEndOpen && <YearEnd />}
 
       {/* Startbildschirm (nur sichtbar, bis ein Modus gewählt wurde) */}
       <StartScreen />

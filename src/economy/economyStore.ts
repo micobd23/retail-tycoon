@@ -13,6 +13,7 @@ import {
   type Season,
 } from "./catalog";
 import { useMail } from "./mailStore";
+import { useGoal } from "./goalStore";
 
 // --- Spielmodi (nur unterschiedliches Startbudget) -----------------------
 export type GameModeId =
@@ -575,7 +576,9 @@ export const useEconomy = create<EconomyState>()(
           contracts: [],
         });
 
-        // Postfach frisch aufsetzen: Willkommensmail + die Start-Angebote.
+        // Ziele und Postfach frisch aufsetzen.
+        useGoal.getState().reset();
+        useGoal.getState().generateGoals("Frühling", 1);
         const mail = useMail.getState();
         mail.clearAll();
         mail.receive({
@@ -593,6 +596,7 @@ export const useEconomy = create<EconomyState>()(
       },
 
       resetGame: () => {
+        useGoal.getState().reset();
         useMail.getState().clearAll();
         set({
           started: false,
@@ -744,6 +748,7 @@ export const useEconomy = create<EconomyState>()(
         let revenue = 0;
         let spoiledValue = 0;
         let unitsSold = 0;
+        let unitsFresh = 0; // für Ziel "units_fresh"
         let best: { name: string; qty: number } | null = null;
         let demandedTotal = 0;
         const missedByProduct: Record<string, number> = {};
@@ -772,6 +777,7 @@ export const useEconomy = create<EconomyState>()(
             stat.ageSum += take * b.age; // Alter beim Verkauf -> Ø Lagerdauer
           }
           unitsSold += soldThis;
+          if (p.storage === "frisch") unitsFresh += soldThis;
           if (soldThis > 0 && (!best || soldThis > best.qty))
             best = { name: p.name, qty: soldThis };
           list = list.filter((b) => b.qty > 0);
@@ -902,9 +908,19 @@ export const useEconomy = create<EconomyState>()(
         // --- Lieferanten-Ausfall ---------------------------------------------
         const newOutage = maybeSupplierOutage(supplierOutage, day + 1) ?? {};
 
+        // --- Ziel-Fortschritt für heute aktualisieren --------------------
+        const goalDailyBonus = useGoal.getState().updateProgress({
+          day,
+          revenue: +revenue.toFixed(2),
+          spoiledValue: +spoiledValue.toFixed(2),
+          unitsFresh,
+          unitsSold,
+          demandedTotal,
+        });
+
         // Tageslohn abziehen und per Mail warnen wenn Konto kritisch.
         const wage = dailyWage(upgrades);
-        const cashAfterSales = +(cash + revenue).toFixed(2);
+        const cashAfterSales = +(cash + revenue + goalDailyBonus).toFixed(2);
         const cashAfter = +(cashAfterSales - wage).toFixed(2);
         if (wage > 0 && cashAfter < 500) {
           useMail.getState().receive({
@@ -938,19 +954,34 @@ export const useEconomy = create<EconomyState>()(
           served: unitsSold,
           missedByProduct,
           upgrades,
-          personalBonus: (upgrades.personal ?? 0) * 3, // +3 Punkte Zufriedenheit je Mitarbeiter
+          personalBonus: (upgrades.personal ?? 0) * 3,
         });
 
         const newHistory = [
-          ...history.slice(-51), // max. 52 Einträge (letzte 51 + heutiger)
+          ...history.slice(-51),
           { ...todayRecord, satisfaction: newSat },
         ];
+
+        // --- Saison-Ziele finalisieren & neue Ziele generieren -----------
+        const seasonChanging = nextCal.season !== season;
+        const yearChanging = nextCal.year !== dayToCalendar(day).year;
+        let goalSeasonBonus = 0;
+
+        if (seasonChanging || yearChanging) {
+          goalSeasonBonus = useGoal.getState().finalizeSeasonGoals(newSat, day);
+        }
+        if (seasonChanging) {
+          useGoal.getState().generateGoals(nextCal.season, nextCal.year);
+        }
+        if (yearChanging) {
+          useGoal.getState().triggerYearEnd(newHistory);
+        }
 
         set({
           batches: newBatches,
           stats: newStats,
           offers: newOffers,
-          cash: cashAfter, // nach Umsatz und Lohn
+          cash: +(cashAfter + goalSeasonBonus).toFixed(2),
           day: day + 1,
           lastRevenue: +revenue.toFixed(2),
           lastSpoiledValue: +spoiledValue.toFixed(2),

@@ -1,0 +1,198 @@
+.ziele-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ziele-empty {
+  padding: 28px 20px;
+  color: #90a4ae;
+  font-size: 13px;
+}
+
+/* Saison-Header */
+.ziele-season-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eceff1;
+}
+
+.ziele-season-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #263238;
+}
+
+.ziele-season-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ziele-done-count {
+  font-size: 12px;
+  color: #607d8b;
+}
+
+.ziele-bonus-earned {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2e7d32;
+  background: #e8f5e9;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* Ziel-Karten */
+.ziele-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ziele-card {
+  background: #fff;
+  border: 1.5px solid #cfd8dc;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ziele-card.done {
+  border-color: #a5d6a7;
+  background: #f1f8e9;
+}
+
+.ziele-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ziele-card-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.ziele-card-info {
+  flex: 1;
+}
+
+.ziele-card-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: #263238;
+}
+
+.ziele-card-reward {
+  font-size: 11px;
+  color: #78909c;
+  margin-top: 2px;
+}
+
+.ziele-check {
+  font-size: 22px;
+  color: #2e7d32;
+  font-weight: 900;
+  flex-shrink: 0;
+}
+
+/* Fortschrittsbalken */
+.ziele-bar {
+  height: 7px;
+  background: #eceff1;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.ziele-bar-fill {
+  height: 100%;
+  background: #42a5f5;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.ziele-card.done .ziele-bar-fill {
+  background: #66bb6a;
+}
+
+.ziele-progress-text {
+  font-size: 11px;
+  color: #78909c;
+  font-variant-numeric: tabular-nums;
+}
+
+.ziele-end-hint {
+  font-size: 11px;
+  color: #90a4ae;
+  font-style: italic;
+}
+
+.ziele-done-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2e7d32;
+}
+
+/* Saisonhistorie */
+.ziele-history {
+  border-top: 1px solid #eceff1;
+  padding-top: 12px;
+}
+
+.ziele-history-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #607d8b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.ziele-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ziele-history-table th,
+.ziele-history-table td {
+  padding: 5px 8px;
+  text-align: right;
+  border-bottom: 1px solid #eceff1;
+}
+
+.ziele-history-table th.l,
+.ziele-history-table td.l {
+  text-align: left;
+}
+
+.ziele-history-table th {
+  font-weight: 600;
+  color: #90a4ae;
+  font-size: 11px;
+}
+
+.ziele-all-done {
+  color: #2e7d32;
+  font-weight: 700;
+}
+
+.ziele-none-done {
+  color: #c62828;
+}
+
+.ziele-rev {
+  color: #2e7d32;
+  font-variant-numeric: tabular-nums;
+}

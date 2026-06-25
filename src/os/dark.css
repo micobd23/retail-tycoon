@@ -1,0 +1,235 @@
+/* Dark-Mode-Overrides für RetailOS
+   Desktop, Taskbar und Fenster-Header sind bereits dunkel (os.css).
+   Diese Datei macht auch den Fenster-Inhalt und alle App-Styles dunkel. */
+
+/* Farbpalette:
+   --dk-bg:    #1a2530  (tiefstes Fenster-Bg)
+   --dk-bg2:   #1e2d38  (Sektionen, Bars)
+   --dk-bg3:   #243040  (Kacheln, Cards)
+   --dk-line:  #2d4055  (Trennlinien, Borders)
+   --dk-txt:   #cfd8dc  (Primärtext)
+   --dk-txt2:  #8faabb  (Sekundärtext)
+   --dk-muted: #546e7a  (gedämpft)
+*/
+
+/* ── Fenster-Body ────────────────────────────────────────────────── */
+.os-root .os-window-body {
+  background: #1a2530;
+  color: #cfd8dc;
+}
+
+/* ── Gemeinsame App-Styles (os.css) ─────────────────────────────── */
+.os-root .app-placeholder {
+  color: #8faabb;
+}
+.os-root .app-placeholder h3 {
+  color: #cfd8dc;
+}
+.os-root .erp-title  { color: #cfd8dc; }
+.os-root .erp-intro  { color: #8faabb; }
+.os-root .erp-table thead th {
+  color: #546e7a;
+  border-bottom-color: #2d4055;
+}
+.os-root .erp-table th,
+.os-root .erp-table td {
+  border-bottom-color: #2d4055;
+}
+.os-root .erp-strong { color: #66bb6a; }
+
+.os-root .browser-bar {
+  background: #1e2d38;
+}
+.os-root .browser-dot {
+  background: #2d4055;
+}
+.os-root .browser-url {
+  background: #243040;
+  color: #8faabb;
+}
+
+/* ── ERP ─────────────────────────────────────────────────────────── */
+.os-root .erp {
+  color: #cfd8dc;
+}
+
+/* Header-Bar */
+.os-root .erp-bar {
+  background: #1e2d38;
+  border-bottom-color: #2d4055;
+}
+.os-root .erp-cap-bar     { background: #2d4055; }
+.os-root .erp-cap-text    { color: #546e7a; }
+.os-root .erp-stat-label  { color: #546e7a; }
+
+/* Tabs */
+.os-root .erp-tabs {
+  background: #1e2d38;
+  border-bottom-color: #2d4055;
+}
+.os-root .erp-tab           { color: #546e7a; }
+.os-root .erp-tab:hover     { color: #8faabb; }
+.os-root .erp-tab.active    { color: #64b5f6; border-bottom-color: #42a5f5; }
+
+/* Kategorie-Filter */
+.os-root .erp-chips {
+  background: #1a2530;
+  border-bottom-color: #2d4055;
+}
+.os-root .erp-chip          { background: #243040; color: #8faabb; }
+.os-root .erp-chip:hover    { background: #2d3d50; }
+
+/* Tagesbericht */
+.os-root .erp-report {
+  background: #1e2d38;
+  border-color: #2d4055;
+}
+.os-root .erp-report-head {
+  background: #1a3548;
+  color: #64b5f6;
+}
+.os-root .erp-report-note { color: #546e7a; }
+
+/* Meldungen */
+.os-root .erp-msg {
+  background: #2b2610;
+  border-bottom-color: #5d4037;
+  color: #ffe082;
+}
+
+/* Tabellen */
+.os-root .erp-grid th,
+.os-root .erp-grid td      { border-bottom-color: #2d4055; }
+.os-root .erp-grid thead th {
+  background: #1a2530;
+  color: #546e7a;
+  border-bottom-color: #2d4055;
+}
+.os-root .erp-cat-row td {
+  background: #1e2d38;
+  color: #546e7a;
+  border-bottom-color: #2d4055;
+}
+
+/* Inputs */
+.os-root .erp-supplier {
+  background: #243040;
+  border-color: #2d4055;
+  color: #cfd8dc;
+}
+.os-root .erp-qty {
+  background: #243040;
+  border-color: #2d4055;
+  color: #cfd8dc;
+}
+
+/* Ausbau-Karten */
+.os-root .erp-ausbau-card {
+  background: #1e2d38;
+  border-color: #2d4055;
+}
+.os-root .erp-ausbau-card.maxed { background: #1a2530; }
+.os-root .erp-ausbau-name { color: #cfd8dc; }
+.os-root .erp-ausbau-level { color: #546e7a; }
+.os-root .erp-ausbau-desc  { color: #8faabb; }
+.os-root .erp-ausbau-effect { color: #8faabb; }
+.os-root .erp-ausbau-intro { color: #8faabb; }
+.os-root .ausbau-section-title { color: #546e7a; }
+
+/* Statistik-Trennlinie */
+.os-root .erp-stat-summary { border-bottom-color: #2d4055; }
+.os-root .erp-foot {
+  color: #546e7a;
+  border-top-color: #2d4055;
+}
+
+/* Bestseller/Ladenhüter-Badges (hell bleiben, nur Hintergrund dämpfen) */
+.os-root .erp-bestseller  { background: #2d2010; }
+.os-root .erp-ladenhueter { background: #243040; color: #546e7a; }
+.os-root .erp-empf        { background: #243040; color: #546e7a; }
+
+/* Trend-Zeile */
+.os-root .erp-row-trend td { background: #1f2310 !important; }
+
+/* ── Statistik-Tab ──────────────────────────────────────────────── */
+.os-root .stat-tabs {
+  background: #1e2d38;
+  border-bottom-color: #2d4055;
+}
+.os-root .stat-tab          { color: #546e7a; }
+.os-root .stat-tab:hover    { background: #243040; }
+.os-root .stat-tab.active {
+  background: #1a2530;
+  border-color: #2d4055;
+  color: #cfd8dc;
+}
+.os-root .kpi-card {
+  background: #1e2d38;
+  border-color: #2d4055;
+}
+.os-root .kpi-label { color: #546e7a; }
+.os-root .kpi-sub   { color: #546e7a; }
+.os-root .stat-section-title { color: #546e7a; }
+
+.os-root .abc-legende {
+  background: #1e2d38;
+  border-bottom-color: #2d4055;
+  color: #8faabb;
+}
+.os-root .abc-badge.C { background: #243040; border-color: #2d4055; }
+
+.os-root .anteil-bar { background: #42a5f5; }
+
+/* ── Ziele-Tab ──────────────────────────────────────────────────── */
+.os-root .ziele-season-title { color: #cfd8dc; }
+.os-root .ziele-done-count   { color: #546e7a; }
+.os-root .ziele-season-header { border-bottom-color: #2d4055; }
+.os-root .ziele-bonus-earned {
+  background: #1a3028;
+  color: #66bb6a;
+}
+
+.os-root .ziele-card {
+  background: #1e2d38;
+  border-color: #2d4055;
+}
+.os-root .ziele-card.done {
+  background: #1a3028;
+  border-color: #2e7d32;
+}
+.os-root .ziele-card-label   { color: #cfd8dc; }
+.os-root .ziele-card-reward  { color: #546e7a; }
+.os-root .ziele-bar          { background: #2d4055; }
+.os-root .ziele-progress-text { color: #546e7a; }
+.os-root .ziele-end-hint     { color: #546e7a; }
+
+.os-root .ziele-history      { border-top-color: #2d4055; }
+.os-root .ziele-history-title { color: #546e7a; }
+.os-root .ziele-history-table th,
+.os-root .ziele-history-table td { border-bottom-color: #2d4055; }
+.os-root .ziele-history-table th { color: #546e7a; }
+
+/* ── Mail ───────────────────────────────────────────────────────── */
+.os-root .mail              { color: #cfd8dc; }
+.os-root .mail-list {
+  background: #1e2d38;
+  border-right-color: #2d4055;
+}
+.os-root .mail-list-head {
+  background: #1e2d38;
+  color: #546e7a;
+  border-bottom-color: #2d4055;
+}
+.os-root .mail-item         { border-bottom-color: #2d4055; }
+.os-root .mail-item:hover   { background: #243040; }
+.os-root .mail-item.active  { background: #1a3548; }
+.os-root .mail-item-from    { color: #cfd8dc; }
+.os-root .mail-item-subj    { color: #546e7a; }
+.os-root .mail-item-day     { color: #2d4055; }
+.os-root .mail-read-head    { border-bottom-color: #2d4055; }
+.os-root .mail-read-head h3 { color: #cfd8dc; }
+.os-root .mail-meta         { color: #546e7a; }
+.os-root .mail-body         { color: #b0c4cc; }
+.os-root .mail-allread      { color: #42a5f5; }
+.os-root .mail-del          { color: #8faabb; }
+.os-root .mail-empty        { color: #546e7a; }

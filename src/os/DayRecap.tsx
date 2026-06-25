@@ -39,14 +39,24 @@ export function DayRecap() {
   const satDelta = sat - recap.prevSatisfaction;
   const satColor = sat >= 80 ? "#2e7d32" : sat >= 55 ? "#f9a825" : "#c62828";
 
+  const isWin = gewinn > 0;
+  const resultLabel = isWin
+    ? recap.spoiledValue === 0 && delta >= 0
+      ? "Guter Tag — kein Verderb, Kasse stimmt"
+      : "Profitable Tag"
+    : gewinn === 0
+    ? "Nullrunde — kein Gewinn, kein Verlust"
+    : "Verlust-Tag — Ausgaben übersteigen Einnahmen";
+
   return (
-    <div className="recap-overlay" onClick={closeRecap}>
-      <div className="recap-card" onClick={(e) => e.stopPropagation()}>
+    <div className={`recap-overlay ${isWin ? "recap-overlay--win" : "recap-overlay--loss"}`} onClick={closeRecap}>
+      <div className={`recap-card ${isWin ? "recap-card--win" : "recap-card--loss"}`} onClick={(e) => e.stopPropagation()}>
         <div className="recap-head">
           <span className="recap-kicker">
             {SEASON_EMOJI[cal.season]} {cal.season} · Q{cal.quarter} · Tag {cal.seasonDay}/13 · Jahr {cal.year}
           </span>
           <h1 className="recap-title">Tag {recap.day} abgeschlossen</h1>
+          <p className="recap-result-label">{resultLabel}</p>
         </div>
 
         {/* Große Kennzahlen-Kacheln */}

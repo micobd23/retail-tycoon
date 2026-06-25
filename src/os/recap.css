@@ -10,6 +10,8 @@
   backdrop-filter: blur(3px);
   animation: recap-fade 0.18s ease-out;
 }
+.recap-overlay--win  { background: rgba(20, 50, 30, 0.60); }
+.recap-overlay--loss { background: rgba(50, 20, 20, 0.60); }
 @keyframes recap-fade {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -22,7 +24,32 @@
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
   padding: 28px 30px 22px;
   animation: recap-pop 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  border-top: 5px solid transparent;
 }
+
+/* Gewinn-Tag: grüner Akzent */
+.recap-card--win {
+  background: linear-gradient(to bottom, #e8f5e9 0%, #ffffff 110px);
+  border-top-color: #43a047;
+}
+.recap-card--win .recap-kicker {
+  background: #c8e6c9;
+  color: #1b5e20;
+}
+.recap-card--win .recap-btn      { background: #43a047; }
+.recap-card--win .recap-btn:hover { background: #2e7d32; }
+
+/* Verlust-Tag: roter Akzent */
+.recap-card--loss {
+  background: linear-gradient(to bottom, #fbe9e7 0%, #ffffff 110px);
+  border-top-color: #e53935;
+}
+.recap-card--loss .recap-kicker {
+  background: #ffcdd2;
+  color: #b71c1c;
+}
+.recap-card--loss .recap-btn      { background: #e53935; }
+.recap-card--loss .recap-btn:hover { background: #c62828; }
 @keyframes recap-pop {
   from { transform: scale(0.94) translateY(8px); opacity: 0; }
   to { transform: scale(1) translateY(0); opacity: 1; }
@@ -49,6 +76,14 @@
   font-weight: 800;
   color: #263238;
 }
+.recap-result-label {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #607d8b;
+  font-style: italic;
+}
+.recap-card--win  .recap-result-label { color: #2e7d32; }
+.recap-card--loss .recap-result-label { color: #c62828; }
 
 /* Kennzahlen-Kacheln */
 .recap-grid {

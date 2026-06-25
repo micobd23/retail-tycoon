@@ -7,6 +7,7 @@ export function startGame(parent: HTMLElement): Phaser.Game {
     type: Phaser.AUTO,
     parent,
     backgroundColor: "#cfd8dc",
+    pixelArt: true, // kein Anti-Aliasing für Pixel-Art-Tiles
     scale: {
       mode: Phaser.Scale.RESIZE, // füllt den Container, passt sich an
       autoCenter: Phaser.Scale.CENTER_BOTH,

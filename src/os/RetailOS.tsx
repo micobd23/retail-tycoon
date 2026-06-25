@@ -8,6 +8,7 @@ import { MailApp } from "./apps/MailApp";
 import { BrowserApp } from "./apps/BrowserApp";
 import { ErpApp } from "./apps/ErpApp";
 import "./os.css";
+import "./dark.css";
 
 // Welcher Inhalt gehört zu welcher App?
 const APP_CONTENT: Record<AppId, () => JSX.Element> = {
