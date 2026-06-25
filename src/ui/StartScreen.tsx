@@ -31,6 +31,7 @@ export function StartScreen() {
             maxLength={32}
             value={firmInput}
             onChange={(e) => setFirmInput(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
             placeholder="Mein Supermarkt"
           />
         </div>
