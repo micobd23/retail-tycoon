@@ -14,7 +14,7 @@
 .os-desktop {
   position: absolute;
   inset: 0 0 44px 0; /* unten Platz für die Taskbar */
-  background: linear-gradient(135deg, #1b3a4b 0%, #2c5364 100%);
+  background: linear-gradient(145deg, #dbeeff 0%, #c8dff7 50%, #d4eaf8 100%);
   padding: 18px;
   display: flex;
   flex-direction: column;
@@ -29,7 +29,7 @@
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 8px 4px;
-  color: #fff;
+  color: #1a3a5c;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -37,8 +37,8 @@
   cursor: pointer;
 }
 .os-icon:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(100, 160, 220, 0.35);
 }
 .os-icon-glyph {
   font-size: 34px;
@@ -83,7 +83,7 @@
 }
 .os-window-header {
   height: 38px;
-  background: #263238;
+  background: #1565c0;
   color: #fff;
   display: flex;
   align-items: center;
@@ -174,17 +174,19 @@
   right: 0;
   bottom: 0;
   height: 44px;
-  background: rgba(20, 30, 36, 0.96);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(100, 160, 220, 0.25);
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 12px;
-  color: #fff;
+  color: #1a3a5c;
 }
 .os-brand {
   font-weight: 700;
   letter-spacing: 0.5px;
-  color: #4fc3f7;
+  color: #1565c0;
 }
 .os-task-list {
   display: flex;
@@ -192,26 +194,27 @@
   flex: 1 1 auto;
 }
 .os-task {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(21, 101, 192, 0.1);
   border: none;
-  color: #fff;
+  color: #1a3a5c;
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
 }
 .os-task:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(21, 101, 192, 0.2);
 }
 .os-clock {
   font-variant-numeric: tabular-nums;
   font-size: 13px;
+  color: #37474f;
   opacity: 0.9;
 }
 .os-newgame {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(21, 101, 192, 0.1);
   border: none;
-  color: #fff;
+  color: #1a3a5c;
   padding: 7px 14px;
   border-radius: 6px;
   font-size: 13px;
@@ -219,7 +222,7 @@
   cursor: pointer;
 }
 .os-newgame:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(21, 101, 192, 0.2);
 }
 .os-leave {
   background: #e53935;
