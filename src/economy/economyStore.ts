@@ -16,6 +16,7 @@ import {
 import { useMail } from "./mailStore";
 import { useGoal } from "./goalStore";
 import { useCompetitor } from "./competitorStore";
+import { EventBus, Events } from "../game/EventBus";
 
 // --- Spielmodi (nur unterschiedliches Startbudget) -----------------------
 export type GameModeId =
@@ -258,6 +259,59 @@ export const PRICE_OFFENSIVE = {
   priceMult: 0.85,        // −15 % auf alle Verkaufspreise (Margen-Opfer)
   pressureMult: 0.5,      // klaut der Konkurrenz Marktanteil
 };
+
+// --- Ladengestaltung (Feature C) ------------------------------------------
+export type StoreTheme = "standard" | "budget" | "premium" | "family";
+interface ThemeMeta {
+  id: StoreTheme; emoji: string; name: string; tagline: string;
+  perks: string[]; tradeoff: string; demandMult: number; satBonus: number; floorTint: number;
+}
+export const STORE_THEMES: ThemeMeta[] = [
+  {
+    id: "standard", emoji: "🏪", name: "Standard",
+    tagline: "Dein Laden so, wie er ist.",
+    perks: ["Keine Umbaukosten", "Ausgewogene Basis"],
+    tradeoff: "Kein besonderer Vorteil.",
+    demandMult: 1.0, satBonus: 0, floorTint: 0xffffff,
+  },
+  {
+    id: "budget", emoji: "🏷️", name: "Schnäppchen-Markt",
+    tagline: "Nackte Regale, volle Einkaufswagen.",
+    perks: ["+8 % Kundenstrom", "Funktional & effizient"],
+    tradeoff: "−5 Zufriedenheit — kahle Optik schreckt Qualitätskunden ab.",
+    demandMult: 1.08, satBonus: -5, floorTint: 0xffe0b2,
+  },
+  {
+    id: "premium", emoji: "🌿", name: "Bio-Boutique",
+    tagline: "Wohliges Ambiente, treue Stammkunden.",
+    perks: ["+10 Zufriedenheit/Tag", "Kunden zahlen gerne mehr"],
+    tradeoff: "−6 % Kundenstrom — nicht jedermanns Geschmack.",
+    demandMult: 0.94, satBonus: 10, floorTint: 0xe8f5e9,
+  },
+  {
+    id: "family", emoji: "🛒", name: "Familien-Markt",
+    tagline: "Bunt, freundlich, für jeden was dabei.",
+    perks: ["+4 % Kundenstrom", "+4 Zufriedenheit/Tag"],
+    tradeoff: "Umbaukosten ohne Ausreißer-Bonus.",
+    demandMult: 1.04, satBonus: 4, floorTint: 0xe3f2fd,
+  },
+];
+export const THEME_SWITCH_COST = 2000;
+export function themeDemandMult(t: StoreTheme | null): number {
+  return STORE_THEMES.find((m) => m.id === t)?.demandMult ?? 1.0;
+}
+export function themeSatBonus(t: StoreTheme | null): number {
+  return STORE_THEMES.find((m) => m.id === t)?.satBonus ?? 0;
+}
+export function themeFloorTint(t: StoreTheme | null): number {
+  return STORE_THEMES.find((m) => m.id === t)?.floorTint ?? 0xffffff;
+}
+
+// --- Kreditlinie (Feature A) -----------------------------------------------
+export function creditLimit(branches: number): number {
+  return 5000 + branches * 3000;
+}
+export const CREDIT_INTEREST_RATE = 0.003; // 0,3 %/Tag auf geborgten Betrag
 
 // Kosten für die n-te Filiale (exponentiell steigend, auf 100 € gerundet).
 export function branchCost(n: number): number {
@@ -507,6 +561,10 @@ interface EconomyState {
   // Konkurrenz-Aktionen: aktiv solange day <= …UntilDay (0 = inaktiv)
   adUntilDay: number;
   offensiveUntilDay: number;
+  // Kreditlinie
+  creditUsed: number;
+  // Ladengestaltung
+  storeTheme: StoreTheme;
 
   startGame: (id: GameModeId | null, name?: string, playMode?: PlayMode, missionId?: string) => void;
   setFirmName: (name: string) => void;
@@ -515,6 +573,9 @@ interface EconomyState {
   setSpecialization: (spec: Specialization) => { ok: boolean; msg?: string };
   launchAdCampaign: () => { ok: boolean; msg?: string };
   launchPriceOffensive: () => { ok: boolean; msg?: string };
+  takeCredit: (amount: number) => { ok: boolean; msg?: string };
+  repayCredit: (amount: number) => { ok: boolean; msg?: string };
+  setStoreTheme: (theme: StoreTheme) => { ok: boolean; msg?: string };
   buy: (productId: string, qty: number, supplierId: string) => { ok: boolean; msg?: string; arrivalDay?: number; deliveryDays?: number };
   upgrade: (track: UpgradeTrack) => { ok: boolean; msg?: string };
   signContract: (supplierId: string) => { ok: boolean; msg?: string };
@@ -649,8 +710,9 @@ export function effectiveSales(
       ? 1 - CRISIS_DEMAND_PENALTY
       : 1.0;
 
+  const themeMult = themeDemandMult(state.storeTheme);
   return Math.round(
-    p.salesPerDay * kundenstrom(u) * satisfactionMultiplier(s) * sf * trendFactor * eventFactor * priceFactor * preiskampfFactor * specMult * adMult * offMult,
+    p.salesPerDay * kundenstrom(u) * satisfactionMultiplier(s) * sf * trendFactor * eventFactor * priceFactor * preiskampfFactor * specMult * adMult * offMult * themeMult,
   );
 }
 
@@ -881,6 +943,8 @@ export const useEconomy = create<EconomyState>()(
       specialization: null,
       adUntilDay: 0,
       offensiveUntilDay: 0,
+      creditUsed: 0,
+      storeTheme: "standard" as StoreTheme,
 
       startGame: (id, name, playMode = "endlos", missionId) => {
         const missionDef = missionId ? MISSIONS.find((m) => m.id === missionId) : null;
@@ -923,6 +987,8 @@ export const useEconomy = create<EconomyState>()(
           specialization: null,
           adUntilDay: 0,
           offensiveUntilDay: 0,
+          creditUsed: 0,
+          storeTheme: "standard" as StoreTheme,
         });
 
         // Konkurrenten zurücksetzen.
@@ -987,6 +1053,8 @@ export const useEconomy = create<EconomyState>()(
           specialization: null,
           adUntilDay: 0,
           offensiveUntilDay: 0,
+          creditUsed: 0,
+          storeTheme: "standard" as StoreTheme,
         });
       },
 
@@ -1475,8 +1543,11 @@ export const useEconomy = create<EconomyState>()(
         const wage = dailyWage(upgrades);
         // Passiveinkommen aus Filialen: 12 % des gestrigen Tagesumsatzes pro Filiale.
         const branchIncome = +(branches * 0.12 * lastRevenue).toFixed(2);
+        // Kredit-Zinsen: 0,3 %/Tag auf geborgten Betrag.
+        const creditUsed = get().creditUsed;
+        const creditInterest = +(creditUsed * CREDIT_INTEREST_RATE).toFixed(2);
         const cashAfterSales = +(cash + revenue + goalDailyBonus + branchIncome).toFixed(2);
-        const cashAfter = +(cashAfterSales - wage).toFixed(2);
+        const cashAfter = +(cashAfterSales - wage - creditInterest).toFixed(2);
         if (wage > 0 && cashAfter < 500) {
           useMail.getState().receive({
             from: "Buchhaltung",
@@ -1509,7 +1580,7 @@ export const useEconomy = create<EconomyState>()(
           served: unitsSold,
           missedByProduct,
           upgrades,
-          personalBonus: (upgrades.personal ?? 0) * 3 + specSatBonus(specialization),
+          personalBonus: (upgrades.personal ?? 0) * 3 + specSatBonus(specialization) + themeSatBonus(get().storeTheme),
         });
 
         // Konkurrenz-Reaktion prüfen: wenn Spieler stark, reagiert ein Konkurrent per Mail.
@@ -1613,10 +1684,40 @@ export const useEconomy = create<EconomyState>()(
       },
 
       closeRecap: () => set({ recapOpen: false }),
+
+      takeCredit: (amount: number) => {
+        const { cash, branches, creditUsed } = get();
+        const limit = creditLimit(branches);
+        const available = limit - creditUsed;
+        if (amount <= 0) return { ok: false, msg: "Ungültiger Betrag." };
+        if (amount > available) return { ok: false, msg: `Nur noch ${euro(available)} verfügbar (Limit: ${euro(limit)}).` };
+        set({ creditUsed: +(creditUsed + amount).toFixed(2), cash: +(cash + amount).toFixed(2) });
+        return { ok: true };
+      },
+
+      repayCredit: (amount: number) => {
+        const { cash, creditUsed } = get();
+        if (amount <= 0) return { ok: false, msg: "Ungültiger Betrag." };
+        if (amount > creditUsed) return { ok: false, msg: `Du schuldest nur ${euro(creditUsed)}.` };
+        if (amount > cash) return { ok: false, msg: `Nicht genug Geld (${euro(cash)} verfügbar).` };
+        set({ creditUsed: +(creditUsed - amount).toFixed(2), cash: +(cash - amount).toFixed(2) });
+        return { ok: true };
+      },
+
+      setStoreTheme: (theme: StoreTheme) => {
+        const { cash, storeTheme } = get();
+        if (theme === storeTheme) return { ok: false, msg: "Dieses Design ist bereits aktiv." };
+        if (theme !== "standard" && cash < THEME_SWITCH_COST)
+          return { ok: false, msg: `Umbau kostet ${euro(THEME_SWITCH_COST)} — nicht genug Geld.` };
+        const cost = theme === "standard" ? 0 : THEME_SWITCH_COST;
+        set({ storeTheme: theme, cash: +(cash - cost).toFixed(2) });
+        EventBus.emit(Events.ThemeChange, theme);
+        return { ok: true };
+      },
     }),
     {
       name: "retail-tycoon-save",
-      version: 11,
+      version: 12,
       migrate: (raw) => {
         const s = (raw ?? {}) as Record<string, unknown>;
         const rawUpgrades = (s.upgrades ?? {}) as Partial<Upgrades>;
@@ -1652,6 +1753,8 @@ export const useEconomy = create<EconomyState>()(
           specialization: (s.specialization as Specialization | null) ?? null,
           adUntilDay: (s.adUntilDay as number) ?? 0,
           offensiveUntilDay: (s.offensiveUntilDay as number) ?? 0,
+          creditUsed: (s.creditUsed as number) ?? 0,
+          storeTheme: (s.storeTheme as StoreTheme) ?? "standard",
           recap: null,
           recapOpen: false,
         };
@@ -1688,6 +1791,8 @@ export const useEconomy = create<EconomyState>()(
         specialization: s.specialization,
         adUntilDay: s.adUntilDay,
         offensiveUntilDay: s.offensiveUntilDay,
+        creditUsed: s.creditUsed,
+        storeTheme: s.storeTheme,
         recap: s.recap,
       }),
     },

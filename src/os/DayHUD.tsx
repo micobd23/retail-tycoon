@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EventBus, Events } from "../game/EventBus";
-import { useEconomy, projectDay, isCrisisActive } from "../economy/economyStore";
+import { useEconomy, projectDay, isCrisisActive, CREDIT_INTEREST_RATE } from "../economy/economyStore";
 import { euro } from "../economy/catalog";
 import "./dayhud.css";
 
@@ -17,6 +17,7 @@ export function DayHUD() {
   const day = useEconomy((s) => s.day);
   const seasonCrisis = useEconomy((s) => s.seasonCrisis);
   const crisisActive = isCrisisActive(seasonCrisis, day);
+  const creditUsed = useEconomy((s) => s.creditUsed);
   // Ziel-Umsatz einmalig beim Start schätzen (zählt von 0 dorthin hoch).
   const target = useRef(projectDay().revenue);
   const start = useRef(performance.now());
@@ -46,6 +47,11 @@ export function DayHUD() {
             </span>
           )}
         </span>
+        {creditUsed > 0 && (
+          <span className="dayhud-credit" title={`Kredit: ${euro(creditUsed)} · ${euro(+(creditUsed * CREDIT_INTEREST_RATE).toFixed(2))}/Tag Zinsen`}>
+            💳 {euro(creditUsed)}
+          </span>
+        )}
         <span className="dayhud-rev">{euro(revenue)}</span>
         <button
           className="dayhud-skip"

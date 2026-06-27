@@ -18,6 +18,8 @@ export const Events = {
   SkipDay: "skip-day",
   // Phaser -> React: sichtbarer Tagesablauf fertig -> jetzt abrechnen + Recap
   DayDone: "day-done",
+  // React -> Phaser: Ladengestaltung geändert -> Bodenfärbe anpassen
+  ThemeChange: "theme-change",
 } as const;
 
 // Form der Daten, die mit InteractionChanged mitgeschickt werden.

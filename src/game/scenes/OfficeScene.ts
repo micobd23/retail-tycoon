@@ -5,7 +5,10 @@ import {
   usedCapacity,
   capacityOf,
   projectDay,
+  themeFloorTint,
+  type StoreTheme,
 } from "../../economy/economyStore";
+import { useCompetitor } from "../../economy/competitorStore";
 
 // ---------------------------------------------------------------------------
 // OfficeScene — die begehbare Bürowelt (Meilenstein 1).
@@ -114,6 +117,13 @@ export class OfficeScene extends Phaser.Scene {
   // (z.B. React StrictMode-Doppelmount / HMR) auf tote Objekte zuzugreifen.
   private alive = true;
 
+  // Ladengestaltung: Boden der Verkaufsfläche für Farbwechsel per Theme.
+  private shopFloorSprite?: Phaser.GameObjects.TileSprite;
+
+  // Konkurrenten-Straße: Stärke-Balken je Konkurrent (id → Rectangle).
+  private compStrengthBars: Record<string, Phaser.GameObjects.Rectangle> = {};
+  private compUnsub?: () => void;
+
   // --- Sichtbarer Tagesablauf -------------------------------------------
   private dayActive = false; // läuft der Tag gerade ab?
   private dayStart = 0; // Zeitstempel (this.time.now) beim Start
@@ -138,12 +148,13 @@ export class OfficeScene extends Phaser.Scene {
 
   create() {
     const worldW = 30 * TILE; // 1200
-    const worldH = 20 * TILE; // 800
+    const worldH = 24 * TILE; // 960 — 4 extra Tiles für STRASSE + Konkurrenten-Läden
 
     this.cameras.main.setBackgroundColor("#cfd8dc");
     this.physics.world.setBounds(0, 0, worldW, worldH);
 
     this.drawFloors();
+    this.buildStreet();
     this.drawFloorGrid(worldW, worldH);
     this.solids = this.physics.add.staticGroup();
     this.buildWalls();
@@ -192,11 +203,15 @@ export class OfficeScene extends Phaser.Scene {
     // „Tag weiter" -> sichtbaren Tagesablauf starten / überspringen.
     EventBus.on(Events.StartDay, this.startDay, this);
     EventBus.on(Events.SkipDay, this.skipDay, this);
+    // Ladengestaltung: Bodenfärbe der Verkaufsfläche sofort anwenden + bei Wechsel updaten.
+    this.applyTheme(useEconomy.getState().storeTheme);
+    EventBus.on(Events.ThemeChange, this.applyTheme, this);
     // Aufräumen, falls die Szene neu gestartet wird (z.B. Hot-Reload).
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       EventBus.off(Events.CloseComputer, this.unfreeze, this);
       EventBus.off(Events.StartDay, this.startDay, this);
       EventBus.off(Events.SkipDay, this.skipDay, this);
+      EventBus.off(Events.ThemeChange, this.applyTheme, this);
     });
 
     // Raum-Beschriftungen
@@ -210,10 +225,17 @@ export class OfficeScene extends Phaser.Scene {
     this.stockUnsub = useEconomy.subscribe((s) =>
       this.refreshStockVisual(s.batches),
     );
+    // Konkurrenten-Stärke live aktualisieren.
+    this.refreshCompetitorStrength(useCompetitor.getState().competitors);
+    this.compUnsub = useCompetitor.subscribe((s) =>
+      this.refreshCompetitorStrength(s.competitors),
+    );
     const cleanup = () => {
       this.alive = false;
       this.stockUnsub?.();
       this.stockUnsub = undefined;
+      this.compUnsub?.();
+      this.compUnsub = undefined;
     };
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
     this.events.once(Phaser.Scenes.Events.DESTROY, cleanup);
@@ -476,7 +498,7 @@ export class OfficeScene extends Phaser.Scene {
     tileFloor(1,  1,  8,  6,   9); // Büro: Frame 9
     tileFloor(18, 1, 11,  6, 122); // Lager: heller Stein
     tileFloor(9,  1,  9,  6, 122); // Flur: heller Stein
-    tileFloor(1,  7, 28, 12, 122); // Verkauf: heller Stein
+    this.shopFloorSprite = tileFloor(1,  7, 28, 12, 122); // Verkauf (Tint-fähig für Ladengestaltung)
   }
 
   // Dezentes Fliesen-Raster über den ganzen Boden — gibt Größe & Tiefe.
@@ -496,7 +518,9 @@ export class OfficeScene extends Phaser.Scene {
     const walls: Solid[] = [
       // Außenrahmen
       { x: 1, y: 1, w: 28, h: 0.5, color: COLORS.wall }, // oben
-      { x: 1, y: 18.5, w: 28, h: 0.5, color: COLORS.wall }, // unten
+      // Südwand mit Türlücke x=13..16 (Ausgang zur Straße)
+      { x: 1,  y: 18.5, w: 12, h: 0.5, color: COLORS.wall }, // unten links
+      { x: 16, y: 18.5, w: 13, h: 0.5, color: COLORS.wall }, // unten rechts
       { x: 1, y: 1, w: 0.5, h: 18, color: COLORS.wall }, // links
       { x: 28.5, y: 1, w: 0.5, h: 18, color: COLORS.wall }, // rechts
 
@@ -663,6 +687,92 @@ export class OfficeScene extends Phaser.Scene {
       .setScale(2)
       .setOrigin(0.5, 0.85) // Füße unten zentriert
       .setDepth(DEPTH.avatar);
+  }
+
+  // Ladengestaltung: Bodenfärbe der Verkaufsfläche per Theme-Tint.
+  private applyTheme(theme: StoreTheme) {
+    if (!this.shopFloorSprite || !this.shopFloorSprite.scene) return;
+    this.shopFloorSprite.setTint(themeFloorTint(theme));
+  }
+
+  // STRASSE: Asphalt-Boden + Gehweg + 3 Konkurrenten-Fassaden.
+  private buildStreet() {
+    const streetY = 19; // Straße beginnt bei Tile 19
+
+    // Asphalt-Boden (dunkelgrau)
+    this.add.rectangle(15 * TILE, (streetY + 2.5) * TILE, 28 * TILE, 5 * TILE, 0x546e7a)
+      .setDepth(DEPTH.floor);
+    // Gehweg (hellgrau) — ein schmaler Streifen direkt hinter dem Laden
+    this.add.rectangle(15 * TILE, (streetY + 0.6) * TILE, 28 * TILE, 1.2 * TILE, 0xb0bec5)
+      .setDepth(DEPTH.floor);
+    // Bürgersteig-Markierung (weiße Linie)
+    this.add.rectangle(15 * TILE, (streetY + 1.2) * TILE, 28 * TILE, 4, 0xffffff)
+      .setDepth(DEPTH.grid).setAlpha(0.5);
+
+    // Straßen-Label
+    this.add.text(15 * TILE, (streetY + 0.25) * TILE, 'STRASSE', {
+      fontSize: '13px', color: '#78909c', fontStyle: 'bold',
+    }).setOrigin(0.5, 0).setDepth(DEPTH.furniture);
+
+    // 3 Konkurrenten-Läden
+    const stores = [
+      { id: "sparfuchs",  name: "Sparfuchs",  type: "Discounter 🏷️", x: 4,    color: 0xef5350 },
+      { id: "preisland",  name: "Preisland",  type: "Volumen 📦",     x: 12.5, color: 0xffa726 },
+      { id: "naturpur",   name: "NaturPur",   type: "Bio 🌿",         x: 21,   color: 0x66bb6a },
+    ];
+
+    for (const s of stores) {
+      const cx = s.x * TILE;
+      const cy = (streetY + 1.5) * TILE;
+      const bw = 7 * TILE;
+      const bh = 2.5 * TILE;
+
+      // Gebäude-Fassade
+      this.add.rectangle(cx + bw / 2, cy + bh / 2, bw, bh, 0xeceff1)
+        .setOrigin(0).setDepth(DEPTH.furniture - 1);
+      // Farbiger Akzentstreifen oben (Markenfarbe)
+      this.add.rectangle(cx + bw / 2, cy + 0.35 * TILE / 2, bw, 0.35 * TILE, s.color)
+        .setOrigin(0).setDepth(DEPTH.furniture);
+      // Fenster-Rechteck
+      this.add.rectangle(cx + bw / 2, cy + 1 * TILE, bw - TILE, 1.2 * TILE, 0xb3e5fc)
+        .setOrigin(0).setDepth(DEPTH.furniture);
+
+      // Name + Typ
+      this.add.text(cx + bw / 2, cy + 0.35 * TILE / 2, s.name, {
+        fontSize: '12px', color: '#fff', fontStyle: 'bold',
+      }).setOrigin(0.5, 0.5).setDepth(DEPTH.avatar);
+      this.add.text(cx + bw / 2, cy + 2.1 * TILE, s.type, {
+        fontSize: '10px', color: '#546e7a',
+      }).setOrigin(0.5, 0).setDepth(DEPTH.furniture);
+
+      // Stärke-Balken (Hintergrund + farbiger Füllstand)
+      this.add.rectangle(cx + bw / 2, cy + 2.6 * TILE, bw - TILE * 0.5, 8, 0xd0d0d0)
+        .setOrigin(0).setDepth(DEPTH.furniture);
+      const bar = this.add.rectangle(cx + (bw - TILE * 0.5) / 2 * 0, cy + 2.6 * TILE, 0, 8, s.color)
+        .setOrigin(0).setDepth(DEPTH.furniture);
+      // Korrektur: left-align bei x + 0.25*TILE
+      bar.setX(cx + 0.25 * TILE);
+      this.compStrengthBars[s.id] = bar;
+
+      // Stärke-Label
+      this.add.text(cx + 0.25 * TILE, cy + 2.75 * TILE, '', {
+        fontSize: '9px', color: '#546e7a',
+      }).setName(`comp-label-${s.id}`).setDepth(DEPTH.avatar);
+    }
+  }
+
+  // Konkurrenten-Stärke-Balken live aktualisieren.
+  private refreshCompetitorStrength(competitors: { id: string; strength: number }[]) {
+    if (!this.alive) return;
+    const barMaxW = 6.5 * TILE;
+    for (const c of competitors) {
+      const bar = this.compStrengthBars[c.id];
+      if (!bar || !bar.scene) continue;
+      const ratio = Math.min(1, c.strength / 100);
+      bar.setSize(barMaxW * ratio, 8);
+      const color = c.strength < 30 ? 0x66bb6a : c.strength < 60 ? 0xffa726 : 0xef5350;
+      bar.setFillStyle(color);
+    }
   }
 
   // Eine Kasse: Korpus + Kenney-Sprite + heller Streifen + kleines Register-Display.

@@ -66,6 +66,15 @@
   font-size: 15px;
   animation: dayhud-pulse 1.4s ease-in-out infinite;
 }
+.dayhud-credit {
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(183, 28, 28, 0.85);
+  color: #fff;
+  border-radius: 6px;
+  padding: 3px 7px;
+  margin-left: auto;
+}
 @keyframes dayhud-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.5; }
