@@ -77,6 +77,10 @@
   overflow: hidden;
   min-width: 280px;
 }
+.os-resize-handle {
+  position: absolute;
+  z-index: 20;
+}
 .os-window-header {
   height: 38px;
   background: #263238;

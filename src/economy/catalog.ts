@@ -327,18 +327,20 @@ export interface Supplier {
   id: string;
   name: string;
   factors: Partial<Record<Category, number>> & { default: number };
-  minQty?: number;          // Mindestmenge je Bestellung (nur Großmarkt)
+  deliveryDays: number;      // Lieferzeit in Tagen (0 = sofort, z.B. Großmarkt-Abholung)
+  minQty?: number;           // Mindestmenge je Bestellung (nur Großmarkt)
   requiresUpgrade?: "lieferwagen"; // nur verfügbar wenn Upgrade aktiv
 }
 
 export const SUPPLIERS: Supplier[] = [
-  { id: "becker",     name: "Großmarkt Becker",  factors: { default: 1.0 } },
-  { id: "mueller",    name: "Getränke Müller",    factors: { Getränke: 0.85, Saisonales: 0.90, default: 1.06 } },
-  { id: "frischefix", name: "FrischeFix",         factors: { Frische: 0.88, Saisonales: 0.88, default: 1.05 } },
-  { id: "drodirekt",  name: "DrogerieDirekt",     factors: { Drogerie: 0.82, Süßwaren: 0.94, default: 1.04 } },
+  { id: "becker",     name: "Großmarkt Becker",  deliveryDays: 1, factors: { default: 1.0 } },
+  { id: "mueller",    name: "Getränke Müller",    deliveryDays: 1, factors: { Getränke: 0.85, Saisonales: 0.90, default: 1.06 } },
+  { id: "frischefix", name: "FrischeFix",         deliveryDays: 1, factors: { Frische: 0.88, Saisonales: 0.88, default: 1.05 } },
+  { id: "drodirekt",  name: "DrogerieDirekt",     deliveryDays: 2, factors: { Drogerie: 0.82, Süßwaren: 0.94, default: 1.04 } },
   {
     id: "grossmarkt",
     name: "Eigener Großmarkt",
+    deliveryDays: 0, // du holst selbst ab — sofortige Verfügbarkeit
     factors: { default: 0.82 }, // −18 % günstiger als Becker
     minQty: 200,
     requiresUpgrade: "lieferwagen",

@@ -7,6 +7,7 @@ import { useMail, unreadCount } from "../economy/mailStore";
 import { MailApp } from "./apps/MailApp";
 import { BrowserApp } from "./apps/BrowserApp";
 import { ErpApp } from "./apps/ErpApp";
+import { FilialenApp } from "./apps/FilialenApp";
 import "./os.css";
 import "./dark.css";
 
@@ -15,10 +16,11 @@ const APP_CONTENT: Record<AppId, () => JSX.Element> = {
   mail: MailApp,
   browser: BrowserApp,
   erp: ErpApp,
+  filialen: FilialenApp,
 };
 
 // Desktop-Icons (Reihenfolge = Anzeige)
-const ICONS: AppId[] = ["erp", "mail", "browser"];
+const ICONS: AppId[] = ["erp", "filialen", "mail", "browser"];
 
 function Clock() {
   const [now, setNow] = useState(() => new Date());
@@ -107,7 +109,7 @@ export function RetailOS() {
       {windows.map((w) => {
         const Content = APP_CONTENT[w.id];
         return (
-          <Window key={w.id} id={w.id} x={w.x} y={w.y} z={w.z} max={w.max}>
+          <Window key={w.id} id={w.id} x={w.x} y={w.y} w={w.w} h={w.h} z={w.z} max={w.max}>
             <Content />
           </Window>
         );

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 // Die drei Programme, die es im RetailOS gibt.
-export type AppId = "mail" | "browser" | "erp";
+export type AppId = "mail" | "browser" | "erp" | "filialen";
 
 // Statische Eigenschaften je Programm (Titel + Standard-Fenstergröße).
 export const APP_META: Record<
@@ -11,6 +11,7 @@ export const APP_META: Record<
   mail: { title: "📧 Mail", w: 640, h: 420 },
   browser: { title: "🌐 RetailNet Explorer", w: 600, h: 420 },
   erp: { title: "📦 Warenwirtschaft (WaWi)", w: 740, h: 500 },
+  filialen: { title: "🏪 Filialen", w: 520, h: 420 },
 };
 
 // Ein offenes Fenster: welche App, wo es liegt, und die Stapel-Reihenfolge.
@@ -18,6 +19,8 @@ export interface OSWindow {
   id: AppId;
   x: number;
   y: number;
+  w: number;
+  h: number;
   z: number;
   max: boolean; // Vollbild?
 }
@@ -35,6 +38,7 @@ interface OSState {
   closeApp: (id: AppId) => void; // Programm schließen
   focusApp: (id: AppId) => void; // Fenster nach vorne holen
   moveApp: (id: AppId, x: number, y: number) => void; // Fenster verschieben
+  resizeWindow: (id: AppId, x: number, y: number, w: number, h: number) => void; // Größe + Position ändern
   toggleMax: (id: AppId) => void; // Vollbild an/aus
 }
 
@@ -61,11 +65,12 @@ export const useOS = create<OSState>((set, get) => ({
       return;
     }
     const offset = (nextOffset = (nextOffset + 1) % 6);
+    const { w, h } = APP_META[id];
     set({
       topZ: topZ + 1,
       windows: [
         ...windows,
-        { id, x: 120 + offset * 32, y: 90 + offset * 28, z: topZ + 1, max: false },
+        { id, x: 120 + offset * 32, y: 90 + offset * 28, w, h, z: topZ + 1, max: false },
       ],
     });
   },
@@ -84,6 +89,11 @@ export const useOS = create<OSState>((set, get) => ({
   moveApp: (id, x, y) =>
     set((s) => ({
       windows: s.windows.map((w) => (w.id === id ? { ...w, x, y } : w)),
+    })),
+
+  resizeWindow: (id, x, y, w, h) =>
+    set((s) => ({
+      windows: s.windows.map((win) => (win.id === id ? { ...win, x, y, w, h } : win)),
     })),
 
   toggleMax: (id) =>

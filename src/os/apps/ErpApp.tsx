@@ -10,9 +10,17 @@ import {
   dailyWage,
   effectiveShelfLife,
   UPGRADE_META,
+  pendingCapOf,
+  isCrisisActive,
+  SPECIALIZATIONS,
+  SPEC_SWITCH_COST,
+  type PendingOrder,
   type Upgrades,
   type UpgradeTrack,
+  type SeasonCrisis,
+  type Specialization,
 } from "../../economy/economyStore";
+import { CATALOG as ALL_CATALOG } from "../../economy/catalog";
 import { useGoal } from "../../economy/goalStore";
 import { ZieleTab } from "./ZieleTab";
 import {
@@ -57,10 +65,12 @@ const empfMenge = (p: Product, u: Upgrades) =>
     ? effectiveSales(p, u) * effectiveShelfLife(p, u)
     : null;
 
-type Tab = "einkauf" | "statistik" | "ausbau" | "ziele";
+type Tab = "einkauf" | "preise" | "statistik" | "ausbau" | "strategie" | "ziele";
 
 export function ErpApp() {
   const [tab, setTab] = useState<Tab>("einkauf");
+  const branches = useEconomy((s) => s.branches);
+  const specialization = useEconomy((s) => s.specialization);
 
   const cash = useEconomy((s) => s.cash);
   const day = useEconomy((s) => s.day);
@@ -72,13 +82,16 @@ export function ErpApp() {
 
   const goals = useGoal((s) => s.goals);
   const goalsDone = goals.filter((g) => g.done).length;
+  const seasonCrisis = useEconomy((s) => s.seasonCrisis);
 
   const cal = dayToCalendar(day);
 
   const [msg, setMsg] = useState<string | null>(null);
 
+  const pendingOrders = useEconomy((s) => s.pendingOrders);
   const used = usedCapacity(batches);
   const cap = capacityOf(upgrades);
+  const pendCap = pendingCapOf(pendingOrders);
 
   // „Tag weiter" startet den sichtbaren Tagesablauf in der Welt (OfficeScene);
   // am Ende rechnet App via DayDone ab und der Vollbild-Recap erscheint.
@@ -132,11 +145,12 @@ export function ErpApp() {
         </div>
 
         {/* Lagerplatz-Anzeigen */}
-        <CapGauge label="Lager (trocken)" used={used.trocken} cap={cap.trocken} />
+        <CapGauge label="Lager (trocken)" used={used.trocken} cap={cap.trocken} pending={pendCap.trocken} />
         <CapGauge
           label="Verkaufsfläche (frisch)"
           used={used.frisch}
           cap={cap.frisch}
+          pending={pendCap.frisch}
         />
 
         {goals.length > 0 && (
@@ -160,13 +174,24 @@ export function ErpApp() {
         </button>
       </div>
 
-      {/* Reiter: Einkauf / Statistik */}
+      {/* Aktive Krisen-Warnung */}
+      {isCrisisActive(seasonCrisis, day) && seasonCrisis && (
+        <CrisisBanner crisis={seasonCrisis} day={day} />
+      )}
+
+      {/* Reiter */}
       <div className="erp-tabs">
         <button
           className={"erp-tab" + (tab === "einkauf" ? " active" : "")}
           onClick={() => setTab("einkauf")}
         >
           🛒 Einkauf
+        </button>
+        <button
+          className={"erp-tab" + (tab === "preise" ? " active" : "")}
+          onClick={() => setTab("preise")}
+        >
+          💰 Preise
         </button>
         <button
           className={"erp-tab" + (tab === "statistik" ? " active" : "")}
@@ -179,6 +204,18 @@ export function ErpApp() {
           onClick={() => setTab("ausbau")}
         >
           🏗️ Ausbau
+        </button>
+        <button
+          className={"erp-tab" + (tab === "strategie" ? " active" : "")}
+          onClick={() => setTab("strategie")}
+          title={branches < 1 ? "Ab der ersten Filiale verfügbar" : "Spezialisierung wählen"}
+        >
+          🎯 Strategie
+          {branches < 1 ? (
+            <span className="erp-tab-badge">🔒</span>
+          ) : specialization === null ? (
+            <span className="erp-tab-badge">!</span>
+          ) : null}
         </button>
         <button
           className={"erp-tab" + (tab === "ziele" ? " active" : "")}
@@ -196,8 +233,10 @@ export function ErpApp() {
       {msg && tab === "einkauf" && <div className="erp-msg">{msg}</div>}
 
       {tab === "einkauf" && <EinkaufView setMsg={setMsg} />}
+      {tab === "preise" && <PreiseView />}
       {tab === "statistik" && <StatistikView />}
       {tab === "ausbau" && <AusbauView />}
+      {tab === "strategie" && <StrategieView />}
       {tab === "ziele" && <ZieleTab />}
     </div>
   );
@@ -208,12 +247,15 @@ function CapGauge({
   label,
   used,
   cap,
+  pending = 0,
 }: {
   label: string;
   used: number;
   cap: number;
+  pending?: number;
 }) {
-  const pct = Math.min(100, Math.round((used / cap) * 100));
+  const total = used + pending;
+  const pct = Math.min(100, Math.round((total / cap) * 100));
   const voll = pct >= 90;
   return (
     <div className="erp-cap">
@@ -225,7 +267,9 @@ function CapGauge({
         />
       </div>
       <span className="erp-cap-text">
-        {used.toLocaleString("de-DE")} / {cap.toLocaleString("de-DE")}
+        {used.toLocaleString("de-DE")}
+        {pending > 0 && <span className="erp-cap-pending">+{pending.toLocaleString("de-DE")}▶</span>}
+        {" / "}{cap.toLocaleString("de-DE")}
       </span>
     </div>
   );
@@ -243,7 +287,9 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
   const trendProductId = useEconomy((s) => s.trendProductId);
   const supplierOutage = useEconomy((s) => s.supplierOutage);
   const contracts = useEconomy((s) => s.contracts);
+  const pendingOrders = useEconomy((s) => s.pendingOrders);
   const buy = useEconomy((s) => s.buy);
+  const prices = useEconomy((s) => s.prices);
   const { season, seasonDay } = dayToCalendar(day);
   const wave = currentSeasonWave(seasonDay);
 
@@ -260,16 +306,35 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
   const getSupplier = (p: Product) =>
     supplier[p.id] ?? cheapestSupplier(p, availableSuppliers.map((s) => s.id));
 
-  // Freier Platz je Fläche -> Kauf blockieren, wenn die Menge nicht reinpasst.
+  // Freier Platz je Fläche — inkl. bereits reservierter Kapazität für unterwegs befindliche Bestellungen.
   const used = usedCapacity(batches);
   const cap = capacityOf(upgrades);
+  const pendCap = pendingCapOf(pendingOrders);
   const freiFuer = (p: Product) =>
-    p.storage === "frisch" ? cap.frisch - used.frisch : cap.trocken - used.trocken;
+    p.storage === "frisch"
+      ? cap.frisch - used.frisch - pendCap.frisch
+      : cap.trocken - used.trocken - pendCap.trocken;
+
+  // Ausstehende Bestellungen je Produkt (Summe + frühester Liefertag).
+  const pendForProduct = (id: string): { qty: number; day: number } | null => {
+    const orders = (pendingOrders as PendingOrder[]).filter((o) => o.productId === id);
+    if (orders.length === 0) return null;
+    return {
+      qty: orders.reduce((s, o) => s + o.qty, 0),
+      day: Math.min(...orders.map((o) => o.arrivalDay)),
+    };
+  };
 
   const handleBuy = (p: Product) => {
     const menge = getQty(p.id);
     const res = buy(p.id, menge, getSupplier(p));
-    setMsg(res.ok ? `✅ ${menge}× ${p.name} eingekauft.` : `⚠️ ${res.msg}`);
+    if (!res.ok) {
+      setMsg(`⚠️ ${res.msg}`);
+    } else if (res.deliveryDays && res.deliveryDays > 0) {
+      setMsg(`📦 ${menge}× ${p.name} bestellt — Lieferung Tag ${res.arrivalDay}`);
+    } else {
+      setMsg(`✅ ${menge}× ${p.name} eingekauft.`);
+    }
   };
 
   // Lieferanten-Mod-Label (+15%, -10% etc.)
@@ -338,7 +403,8 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                 const stueck = unitPrice(effBase, menge);
                 const mengenRabatt = rabattProzent(menge);
                 const gesamt = +(stueck * menge).toFixed(2);
-                const marge = +(p.vk - stueck).toFixed(2);
+                const myVK = prices[p.id] ?? p.vk;
+                const marge = +(myVK - stueck).toFixed(2);
                 const frei = freiFuer(p);
                 const minQty = supObj?.minQty ?? 0;
                 const tooLow = minQty > 0 && menge > 0 && menge < minQty;
@@ -394,6 +460,15 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                           −{lastMissed[p.id]} verpasst
                         </span>
                       )}
+                      {(() => {
+                        const pend = pendForProduct(p.id);
+                        if (!pend) return null;
+                        return (
+                          <span className="erp-pending" title="Unterwegs — Kapazität bereits reserviert.">
+                            ▶ {pend.qty} Stk · Tag {pend.day}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="l">
                       <select
@@ -411,9 +486,10 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                           const ml = modLabel(s.id);
                           const contractMark = contracts.includes(s.id) ? " 🤝" : "";
                           const minMark = s.minQty ? ` (min. ${s.minQty})` : "";
+                          const delivLabel = s.deliveryDays === 0 ? " · sofort" : ` · ${s.deliveryDays}T`;
                           return (
                             <option key={s.id} value={s.id} disabled={outage}>
-                              {outage ? "⛔ " : ""}{s.name}{contractMark}{minMark}{ml ? ` ${ml}` : ""} · {euro(baseEk)}{outage ? " — Ausfall" : ""}
+                              {outage ? "⛔ " : ""}{s.name}{contractMark}{minMark}{ml ? ` ${ml}` : ""} · {euro(baseEk)}{delivLabel}{outage ? " — Ausfall" : ""}
                             </option>
                           );
                         })}
@@ -438,7 +514,12 @@ function EinkaufView({ setMsg }: { setMsg: (m: string) => void }) {
                         <span className="erp-rabatt"> −{mengenRabatt}%</span>
                       )}
                     </td>
-                    <td>{euro(p.vk)}</td>
+                    <td>
+                      {euro(myVK)}
+                      {prices[p.id] !== undefined && prices[p.id] !== p.vk && (
+                        <span style={{ fontSize: 10, color: "#1565c0", marginLeft: 3 }}>✎</span>
+                      )}
+                    </td>
                     <td className={marge >= 0 ? "erp-marge" : "erp-loss"}>
                       {euro(marge)}
                     </td>
@@ -985,6 +1066,290 @@ function AusbauView() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// --- Preise-Ansicht -------------------------------------------------------
+function PreiseView() {
+  const prices    = useEconomy((s) => s.prices);
+  const setPrice  = useEconomy((s) => s.setPrice);
+  const upgrades  = useEconomy((s) => s.upgrades);
+  const day       = useEconomy((s) => s.day);
+  const { season, seasonDay } = dayToCalendar(day);
+
+  // Lokaler Input-State (String, damit man ungestört tippen kann)
+  const [inputs, setInputs] = useState<Record<string, string>>({});
+
+  const getInput = (id: string, baseVK: number): string => {
+    if (inputs[id] !== undefined) return inputs[id];
+    return (prices[id] ?? baseVK).toFixed(2);
+  };
+
+  const commit = (id: string, _baseVK: number, raw: string) => {
+    const val = parseFloat(raw.replace(",", "."));
+    if (!isNaN(val) && val > 0) setPrice(id, +val.toFixed(2));
+    setInputs((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  };
+
+  const reset = (id: string, baseVK: number) => {
+    setPrice(id, baseVK);
+    setInputs((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  };
+
+  return (
+    <div className="erp-table-wrap">
+      <p style={{ padding: "8px 4px 4px", margin: 0, fontSize: 12, color: "#546e7a" }}>
+        Passe deine Verkaufspreise an. Höhere Preise = mehr Marge, aber weniger Kunden (Elastizität ×1,5).
+        Änderungen wirken ab dem nächsten Tag.
+      </p>
+      <table className="erp-grid">
+        <thead>
+          <tr>
+            <th className="l">Produkt</th>
+            <th>Ø EK</th>
+            <th>Basis-VK</th>
+            <th>Dein Preis</th>
+            <th>Marge %</th>
+            <th>Nachfrage-Effekt</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {CATEGORIES.map((cat) => {
+            const items = ALL_CATALOG.filter((p) => {
+              if (p.category !== cat) return true; // alle Kategorien zeigen
+              return true;
+            }).filter((p) => p.category === cat);
+            if (items.length === 0) return null;
+            return [
+              <tr key={"cat-" + cat} className="erp-cat-row">
+                <td className="l" colSpan={7}>{cat}</td>
+              </tr>,
+              ...items.map((p) => {
+                const myVK     = parseFloat(getInput(p.id, p.vk));
+                const isCustom = prices[p.id] !== undefined && prices[p.id] !== p.vk;
+                const marge    = p.ek > 0 ? Math.round(((myVK - p.ek) / p.ek) * 100) : 0;
+                void upgrades; // via effectiveSales
+                const baseDemand = effectiveSales(p, upgrades, undefined, season, seasonDay);
+                // Effekt bei hypothetischem Preis: Elastizität manuell berechnen
+                const factor = myVK > 0 ? Math.pow(p.vk / myVK, 1.5) : 1;
+                const demandPct = Math.round((factor - 1) * 100);
+                const belowEK  = myVK < p.ek;
+                return (
+                  <tr key={p.id}>
+                    <td className="l">
+                      <span className="erp-name">{p.name}</span>
+                      {isCustom && <span style={{ fontSize: 10, color: "#1565c0", marginLeft: 4 }}>✎ angepasst</span>}
+                      {belowEK && <span style={{ fontSize: 10, color: "#c62828", marginLeft: 4 }}>⚠ unter EK</span>}
+                    </td>
+                    <td style={{ color: "#546e7a" }}>{euro(p.ek)}</td>
+                    <td style={{ color: "#78909c" }}>{euro(p.vk)}</td>
+                    <td>
+                      <input
+                        className="erp-qty"
+                        type="number"
+                        min={0.01}
+                        step={0.05}
+                        style={{ width: 72 }}
+                        value={getInput(p.id, p.vk)}
+                        onChange={(e) => setInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        onBlur={(e) => commit(p.id, p.vk, e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") commit(p.id, p.vk, (e.target as HTMLInputElement).value); }}
+                      />
+                    </td>
+                    <td className={marge >= 20 ? "erp-marge" : marge >= 0 ? "" : "erp-loss"}>
+                      {marge}%
+                    </td>
+                    <td style={{ color: demandPct > 0 ? "#2e7d32" : demandPct < 0 ? "#c62828" : "#546e7a", fontWeight: 600 }}>
+                      {demandPct === 0 ? "—" : demandPct > 0 ? `▲${demandPct}%` : `▼${Math.abs(demandPct)}%`}
+                      {baseDemand > 0 && (
+                        <span style={{ fontWeight: 400, color: "#90a4ae", fontSize: 11, marginLeft: 4 }}>
+                          (~{Math.round(baseDemand * factor)}/T)
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      {isCustom && (
+                        <button
+                          className="erp-chip"
+                          style={{ padding: "2px 8px", fontSize: 11 }}
+                          onClick={() => reset(p.id, p.vk)}
+                          title="Auf Katalogpreis zurücksetzen"
+                        >
+                          ↺
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              }),
+            ];
+          })}
+        </tbody>
+      </table>
+      <p className="erp-foot">
+        Nachfrage-Effekt = Änderung gegenüber dem Katalogpreis. ▲ = mehr Kunden, ▼ = weniger.
+        Alle Preise in €, Änderung mit Enter oder Klick außerhalb bestätigen.
+      </p>
+    </div>
+  );
+}
+
+// --- Strategie / Spezialisierung ------------------------------------------
+
+function StrategieView() {
+  const branches       = useEconomy((s) => s.branches);
+  const specialization = useEconomy((s) => s.specialization);
+  const cash           = useEconomy((s) => s.cash);
+  const setSpec        = useEconomy((s) => s.setSpecialization);
+  const [msg, setMsg]  = useState<string | null>(null);
+
+  if (branches < 1) {
+    return (
+      <div className="erp-table-wrap" style={{ padding: "32px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 44, marginBottom: 10 }}>🔒</div>
+        <h3 style={{ margin: "0 0 8px", color: "#37474f" }}>Strategie noch gesperrt</h3>
+        <p style={{ color: "#607d8b", fontSize: 14, maxWidth: 460, margin: "0 auto", lineHeight: 1.5 }}>
+          Deine Spezialisierung schaltest du frei, sobald du deine <strong>erste Filiale</strong> eröffnet hast.
+          Bis dahin: Konzentriere dich auf einen profitablen Hauptladen!
+        </p>
+      </div>
+    );
+  }
+
+  const handlePick = (spec: Specialization) => {
+    const res = setSpec(spec);
+    if (!res.ok) setMsg(res.msg ?? "Aktion nicht möglich.");
+    else setMsg(null);
+  };
+
+  return (
+    <div className="erp-table-wrap" style={{ padding: "16px 20px" }}>
+      <h3 style={{ margin: "0 0 4px", color: "#263238" }}>Deine Ausrichtung</h3>
+      <p style={{ color: "#607d8b", fontSize: 13, margin: "0 0 16px", lineHeight: 1.5 }}>
+        Wähle eine strategische Identität für deinen Markt. Jeder Pfad hat klare Vor- und Nachteile.
+        {specialization === null
+          ? " Die erste Wahl ist gratis."
+          : ` Ein Wechsel kostet ${euro(SPEC_SWITCH_COST)}.`}
+      </p>
+
+      {msg && (
+        <div style={{ background: "#fff3e0", border: "1px solid #ffcc80", borderRadius: 8, padding: "9px 13px", fontSize: 13, marginBottom: 14 }}>
+          ⚠️ {msg}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+        {SPECIALIZATIONS.map((s) => {
+          const active = specialization === s.id;
+          const cost = specialization === null ? 0 : SPEC_SWITCH_COST;
+          const canAfford = active || cost <= cash;
+          return (
+            <div
+              key={s.id}
+              style={{
+                background: active ? "#e8f5e9" : "#fff",
+                border: `2px solid ${active ? "#43a047" : "#cfd8dc"}`,
+                borderRadius: 12,
+                padding: 16,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 30 }}>{s.emoji}</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 16, color: "#263238" }}>{s.name}</div>
+                  {active && <div style={{ fontSize: 11, color: "#2e7d32", fontWeight: 700 }}>✓ AKTIV</div>}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, fontStyle: "italic", color: "#78909c", lineHeight: 1.4 }}>
+                {s.tagline}
+              </div>
+              <ul style={{ margin: "2px 0 0", paddingLeft: 18, fontSize: 13, color: "#388e3c", lineHeight: 1.5 }}>
+                {s.perks.map((p, i) => <li key={i}>{p}</li>)}
+              </ul>
+              <div style={{ fontSize: 12, color: "#c62828", lineHeight: 1.4, marginTop: 2 }}>
+                ⚠️ {s.tradeoff}
+              </div>
+              <button
+                disabled={active || !canAfford}
+                onClick={() => handlePick(s.id)}
+                style={{
+                  marginTop: "auto",
+                  padding: "9px 0",
+                  borderRadius: 8,
+                  border: "none",
+                  background: active ? "#a5d6a7" : canAfford ? "#2e7d32" : "#cfd8dc",
+                  color: active ? "#1b5e20" : "#fff",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: active || !canAfford ? "default" : "pointer",
+                }}
+              >
+                {active
+                  ? "Aktiv"
+                  : specialization === null
+                    ? "Diese Ausrichtung wählen"
+                    : canAfford
+                      ? `Wechseln (${euro(SPEC_SWITCH_COST)})`
+                      : `${euro(SPEC_SWITCH_COST)} nötig`}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --- Krisen-Banner --------------------------------------------------------
+
+const CRISIS_META: Record<string, { icon: string; label: string; color: string; bg: string; border: string }> = {
+  hitzewelle:    { icon: "☀️", label: "Hitzewelle",    color: "#b71c1c", bg: "#fff8e1", border: "#ef9a9a" },
+  preiskampf:    { icon: "⚔️", label: "Preiskampf",    color: "#1565c0", bg: "#e3f2fd", border: "#90caf9" },
+  lieferskandal: { icon: "🚨", label: "Lieferskandal", color: "#6a1b9a", bg: "#f3e5f5", border: "#ce93d8" },
+};
+
+export function CrisisBanner({ crisis, day }: { crisis: SeasonCrisis; day: number }) {
+  const meta = CRISIS_META[crisis.type];
+  const daysLeft = Math.max(0, crisis.endDay - day + 1);
+
+  let detail = "";
+  if (crisis.type === "hitzewelle") {
+    detail = "Frischware-Haltbarkeit ist halbiert";
+  } else if (crisis.type === "preiskampf") {
+    const names = (crisis.affectedProductIds ?? [])
+      .map((id) => CATALOG.find((p) => p.id === id)?.name ?? id)
+      .join(", ");
+    detail = `−25 % Nachfrage: ${names || "ausgewählte Produkte"}`;
+  } else if (crisis.type === "lieferskandal") {
+    const sup = SUPPLIERS.find((s) => s.id === crisis.affectedSupplierId);
+    detail = `${sup?.name ?? "Lieferant"} vorübergehend gesperrt`;
+  }
+
+  return (
+    <div style={{
+      background: meta.bg,
+      border: `1px solid ${meta.border}`,
+      borderLeft: `4px solid ${meta.color}`,
+      color: meta.color,
+      padding: "7px 14px",
+      fontSize: 13,
+      fontWeight: 600,
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexShrink: 0,
+    }}>
+      <span style={{ fontSize: 16 }}>{meta.icon}</span>
+      <span>Krise aktiv: {meta.label}</span>
+      <span style={{ fontWeight: 400, color: "#555", marginLeft: 4 }}>— {detail}</span>
+      <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.8 }}>
+        noch {daysLeft} {daysLeft === 1 ? "Tag" : "Tage"}
+      </span>
     </div>
   );
 }

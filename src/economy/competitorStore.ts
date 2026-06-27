@@ -103,7 +103,15 @@ interface CompetitorState {
   checkReaction: (revenue: number, satisfaction: number, day: number) => ReactionResult | null;
   marketPressure: () => number; // 0–0.12 Reduktion des Kundenstroms
   playerStrength: (lastRevenue: number) => number; // für Marktanteil-Berechnung
+  marketShares: (lastRevenue: number) => MarketShare[];
   resetCompetitors: () => void;
+}
+
+export interface MarketShare {
+  id: string;
+  name: string;
+  share: number; // 0–1
+  isPlayer: boolean;
 }
 
 export const useCompetitor = create<CompetitorState>()(
@@ -179,6 +187,22 @@ export const useCompetitor = create<CompetitorState>()(
       playerStrength: (lastRevenue: number) => {
         // ~600 €/Tag = solider Mittelspieler → Stärke 50
         return Math.min(100, Math.max(5, (lastRevenue / 600) * 50));
+      },
+
+      marketShares: (lastRevenue: number) => {
+        const { competitors } = get();
+        const playerStr = Math.min(100, Math.max(5, (lastRevenue / 600) * 50));
+        const entries = [
+          { id: "player", name: "Du", strength: playerStr, isPlayer: true },
+          ...competitors.map((c) => ({ id: c.id, name: c.name, strength: c.strength, isPlayer: false })),
+        ];
+        const total = entries.reduce((s, e) => s + e.strength, 0) || 1;
+        return entries.map((e) => ({
+          id: e.id,
+          name: e.name,
+          share: e.strength / total,
+          isPlayer: e.isPlayer,
+        }));
       },
 
       resetCompetitors: () =>

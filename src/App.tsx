@@ -6,6 +6,7 @@ import { RetailOS } from "./os/RetailOS";
 import { DayHUD } from "./os/DayHUD";
 import { DayRecap } from "./os/DayRecap";
 import { YearEnd } from "./os/YearEnd";
+import { WinScreen } from "./os/WinScreen";
 import { useOS } from "./os/osStore";
 import { useEconomy } from "./economy/economyStore";
 import { useGoal } from "./economy/goalStore";
@@ -80,6 +81,9 @@ export default function App() {
 
       {/* Startbildschirm (nur sichtbar, bis ein Modus gewählt wurde) */}
       <StartScreen />
+
+      {/* Gewonnen! (Kampagne-Mission erfüllt) */}
+      <WinScreen />
     </div>
   );
 }

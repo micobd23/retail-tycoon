@@ -45,6 +45,10 @@
   color: #607d8b;
   font-variant-numeric: tabular-nums;
 }
+.erp-cap-pending {
+  color: #e65100;
+  font-weight: 600;
+}
 
 /* Einkauf-Ansicht: Chips fix oben, Tabelle scrollt darunter */
 .erp-einkauf {
@@ -382,6 +386,17 @@
   color: #c62828;
   background: #fbe9e7;
   border: 1px solid #ffcdd2;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.erp-pending {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #e65100;
+  background: #fff3e0;
+  border: 1px solid #ffcc80;
   padding: 2px 7px;
   border-radius: 999px;
 }

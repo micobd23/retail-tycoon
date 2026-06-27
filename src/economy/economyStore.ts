@@ -81,6 +81,7 @@ export interface DayRecap {
   prevSatisfaction: number; // Zufriedenheit vor dem Tag (für ↑/↓)
   missedUnits: number; // Stück, die mangels Bestand nicht verkauft wurden
   voices: CustomerVoice[]; // Kundenstimmen
+  branchIncome: number; // Passiveinkommen aus Filialen an diesem Tag
 }
 
 // Ein befristetes Angebot: prozentualer EK-Rabatt für ein Produkt, X Tage gültig.
@@ -97,6 +98,171 @@ export interface SeasonEvent {
 }
 
 const RABATTE = [0.1, 0.15, 0.2, 0.25];
+
+// --- Krisen-System -------------------------------------------------------
+// Einmal pro Saison kann eine Krise auftreten (70 % Chance).
+// Jede Krise hat einen Trigger-Tag, eine Dauer und typspezifische Effekte.
+export type CrisisType = "hitzewelle" | "preiskampf" | "lieferskandal";
+
+export interface SeasonCrisis {
+  type: CrisisType;
+  triggerDay: number;   // erster Tag der Krise
+  endDay: number;       // letzter Tag (inkl.)
+  announced: boolean;   // Ankündigungs-Mail bereits gesendet?
+  affectedProductIds?: string[];  // preiskampf: betroffene Produkte
+  affectedSupplierId?: string;    // lieferskandal: gesperrter Lieferant
+}
+
+export function isCrisisActive(crisis: SeasonCrisis | null, day: number): boolean {
+  return !!crisis && day >= crisis.triggerDay && day <= crisis.endDay;
+}
+
+const CRISIS_DEMAND_PENALTY = 0.25; // preiskampf: −25 % Nachfrage für betroffene Produkte
+
+// --- Spielmodi & Missionen -----------------------------------------------
+export type PlayMode = "kampagne" | "endlos";
+
+export type WinConditionDef =
+  | { type: "year_revenue"; year: number; target: number }
+  | { type: "branches"; count: number }
+  | { type: "survive_seasons"; count: number; minSat: number }
+  | { type: "empire"; branches: number; yearRevenue: number };
+
+export interface MissionDef {
+  id: string;
+  emoji: string;
+  title: string;
+  flavor: string;
+  desc: string;
+  budget: number;
+  winCondition: WinConditionDef;
+}
+
+export const MISSIONS: MissionDef[] = [
+  {
+    id: "mission1",
+    emoji: "🌱",
+    title: "Der erste Laden",
+    flavor: "Du hast einen kleinen Supermarkt geerbt. Beweise, dass du das Zeug zum Händler hast.",
+    desc: "50.000 € Gesamtumsatz im ersten Jahr erreichen.",
+    budget: 10000,
+    winCondition: { type: "year_revenue", year: 1, target: 50000 },
+  },
+  {
+    id: "mission2",
+    emoji: "🏬",
+    title: "Die Expansion",
+    flavor: "Dein Stammladen läuft — jetzt baust du die Kette aus.",
+    desc: "3 Filialen eröffnen.",
+    budget: 8000,
+    winCondition: { type: "branches", count: 3 },
+  },
+  {
+    id: "mission3",
+    emoji: "⚡",
+    title: "Krisenfest",
+    flavor: "Der Markt ist turbulent. Zeig, dass dein Laden auch schwere Zeiten übersteht.",
+    desc: "3 Saisonen mit ≥ 75 % Kundenzufriedenheit am Ende überstehen.",
+    budget: 5000,
+    winCondition: { type: "survive_seasons", count: 3, minSat: 75 },
+  },
+  {
+    id: "mission4",
+    emoji: "👑",
+    title: "Das Imperium",
+    flavor: "Du bist bereit für die große Liga. Baue ein wahres Supermarkt-Imperium.",
+    desc: "10 Filialen UND 500.000 € Gesamtumsatz.",
+    budget: 15000,
+    winCondition: { type: "empire", branches: 10, yearRevenue: 500000 },
+  },
+];
+
+// --- Spezialisierungspfade ------------------------------------------------
+// Strategische Ausrichtung des Ladens. Spiegelt die Konkurrenten-Typen wider
+// (Discounter vs. Bio) und gibt jedem Pfad klare Vor- und Nachteile.
+export type Specialization = "discounter" | "premium" | "vollsortimenter";
+
+export interface SpecMeta {
+  id: Specialization;
+  emoji: string;
+  name: string;
+  tagline: string;
+  perks: string[];
+  tradeoff: string;
+}
+
+export const SPECIALIZATIONS: SpecMeta[] = [
+  {
+    id: "discounter",
+    emoji: "🏷️",
+    name: "Discounter",
+    tagline: "Masse statt Marge — der Laden für jeden Geldbeutel.",
+    perks: ["+15 % Laufkundschaft", "Volle Läden schrecken niemanden ab"],
+    tradeoff: "Kunden sind sehr preissensibel — höhere VK-Preise vertreiben sie schnell.",
+  },
+  {
+    id: "premium",
+    emoji: "🌿",
+    name: "Bio & Premium",
+    tagline: "Qualität hat ihren Preis — und die Kunden zahlen ihn gern.",
+    perks: ["Kunden zahlen höhere Preise klaglos", "+ dauerhafte Zufriedenheit"],
+    tradeoff: "Weniger Laufkundschaft (−12 %) — du lebst von wenigen, treuen Kunden.",
+  },
+  {
+    id: "vollsortimenter",
+    emoji: "🛒",
+    name: "Vollsortimenter",
+    tagline: "Alles unter einem Dach — der verlässliche Allrounder.",
+    perks: ["+30 % Lagerkapazität (beide Flächen)", "+5 % Nachfrage über alle Kategorien"],
+    tradeoff: "Keine Spitzen-Boni — solide, aber ohne Extrem-Stärken.",
+  },
+];
+
+// Kosten für einen späteren Strategiewechsel (die erste Wahl ist gratis).
+export const SPEC_SWITCH_COST = 2000;
+
+// Spezialisierungs-Effekte (zentral, damit UI und Logik dieselbe Quelle nutzen).
+export function specDemandMult(spec: Specialization | null): number {
+  switch (spec) {
+    case "discounter": return 1.15;
+    case "premium": return 0.88;
+    case "vollsortimenter": return 1.05;
+    default: return 1.0;
+  }
+}
+export function specPriceExp(spec: Specialization | null): number {
+  switch (spec) {
+    case "discounter": return 2.3; // sehr preissensibel
+    case "premium": return 0.8;    // tolerant gegenüber hohen Preisen
+    default: return 1.5;           // mittlere Elastizität
+  }
+}
+export function specCapMult(spec: Specialization | null): number {
+  return spec === "vollsortimenter" ? 1.3 : 1.0;
+}
+export function specSatBonus(spec: Specialization | null): number {
+  return spec === "premium" ? 3 : 0; // täglicher Zufriedenheits-Bonus
+}
+
+// --- Konkurrenz-Aktionen (Feature 4) --------------------------------------
+// Aktive Hebel gegen die Konkurrenz: kosten Geld/Marge, wirken zeitlich begrenzt.
+export const AD_CAMPAIGN = {
+  cost: 1500,
+  days: 5,
+  demandMult: 1.3,        // +30 % Kundenstrom während der Kampagne
+  pressureMult: 0.4,      // Marktdruck der Konkurrenz auf 40 % gedrückt
+};
+export const PRICE_OFFENSIVE = {
+  days: 4,
+  demandMult: 1.25,       // +25 % Nachfrage durch Lockpreise
+  priceMult: 0.85,        // −15 % auf alle Verkaufspreise (Margen-Opfer)
+  pressureMult: 0.5,      // klaut der Konkurrenz Marktanteil
+};
+
+// Kosten für die n-te Filiale (exponentiell steigend, auf 100 € gerundet).
+export function branchCost(n: number): number {
+  return Math.round((40000 * Math.pow(1.8, n)) / 100) * 100;
+}
 
 // Erzeugt ein Angebot für ein zufälliges Produkt (das noch keins hat).
 function rollOffer(active: Record<string, Offer>): [string, Offer] | null {
@@ -179,6 +345,83 @@ function maybeSupplierOutage(
   return active;
 }
 
+// --- Krise rollieren -----------------------------------------------------
+function rollCrisis(firstDayOfSeason: number, season: Season): SeasonCrisis {
+  const types: CrisisType[] = season === "Sommer"
+    ? ["hitzewelle", "preiskampf", "lieferskandal"]
+    : ["preiskampf", "lieferskandal"];
+  const type = types[Math.floor(Math.random() * types.length)];
+  const offset = 4 + Math.floor(Math.random() * 6); // Tag 4–9 der Saison
+  const triggerDay = firstDayOfSeason + offset;
+  const duration = type === "hitzewelle" ? 3 : 5 + Math.floor(Math.random() * 3);
+  const endDay = Math.min(triggerDay + duration - 1, firstDayOfSeason + 12);
+
+  const affectedProductIds = type === "preiskampf"
+    ? CATALOG
+        .filter((p) => p.storage === "trocken" && p.salesPerDay >= 10 && !p.onlyInSeason)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 3 + Math.floor(Math.random() * 3))
+        .map((p) => p.id)
+    : undefined;
+
+  const freeSup = SUPPLIERS.filter((s) => !s.requiresUpgrade);
+  const affectedSupplierId = type === "lieferskandal"
+    ? freeSup[Math.floor(Math.random() * freeSup.length)]?.id
+    : undefined;
+
+  return { type, triggerDay, endDay, announced: false, affectedProductIds, affectedSupplierId };
+}
+
+// --- Krisen-Ankündigungs-Mail ---------------------------------------------
+function sendCrisisAnnouncementMail(crisis: SeasonCrisis, day: number) {
+  const daysLeft = crisis.triggerDay - day; // Tage bis zur Krise
+  const duration = crisis.endDay - crisis.triggerDay + 1;
+  if (crisis.type === "hitzewelle") {
+    useMail.getState().receive({
+      from: "Wetterdienst",
+      subject: `☀️ Hitzewelle in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"} — Frischware gefährdet!`,
+      body:
+        `Eine außergewöhnliche Hitzewelle erwartet uns in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"}.\n\n` +
+        `Die hohen Temperaturen halbieren die Haltbarkeit aller Frischprodukte für ca. ${duration} Tage.\n\n` +
+        `Empfehlung: Reduziere deine Frischware-Bestände — oder riskiere deutlich erhöhten Verderb.\n\n` +
+        `Dauer: Tag ${crisis.triggerDay}–${crisis.endDay}.`,
+      day,
+      kind: "info",
+    });
+  } else if (crisis.type === "preiskampf") {
+    const names = (crisis.affectedProductIds ?? [])
+      .map((id) => CATALOG.find((p) => p.id === id)?.name ?? id)
+      .join(", ");
+    useMail.getState().receive({
+      from: "Marktforschung",
+      subject: `⚔️ Preiskampf von Sparfuchs in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"}!`,
+      body:
+        `Sparfuchs startet in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"} eine aggressive Preisaktion.\n\n` +
+        `Betroffene Produkte: ${names}.\n\n` +
+        `Die Nachfrage für diese Artikel sinkt bei uns für ca. ${duration} Tage um 25 %, ` +
+        `da Kunden zum Mitbewerber abwandern.\n\n` +
+        `Tipp: Bestellmengen für diese Produkte temporär reduzieren.\n\n` +
+        `Dauer: Tag ${crisis.triggerDay}–${crisis.endDay}.`,
+      day,
+      kind: "info",
+    });
+  } else {
+    const supName = SUPPLIERS.find((s) => s.id === crisis.affectedSupplierId)?.name ?? "Unbekannter Lieferant";
+    useMail.getState().receive({
+      from: "Verbrauchermagazin",
+      subject: `🚨 Lieferantenskandal: ${supName} in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"} gesperrt!`,
+      body:
+        `Achtung: Bei ${supName} wurde ein schwerwiegender Qualitätsskandal aufgedeckt.\n\n` +
+        `Der Lieferant wird ab Tag ${crisis.triggerDay} für ca. ${duration} Tage gesperrt ` +
+        `(bis Tag ${crisis.endDay}).\n\n` +
+        `Sichere dich jetzt mit Alternativlieferanten ab oder besorge ausreichend Vorrat, ` +
+        `um die Ausfallzeit zu überbrücken.`,
+      day,
+      kind: "info",
+    });
+  }
+}
+
 // --- Start-Angebote: 2 Stück.
 function seedOffers(): Record<string, Offer> {
   const active: Record<string, Offer> = {};
@@ -187,6 +430,31 @@ function seedOffers(): Record<string, Offer> {
     if (o) active[o[0]] = o[1];
   }
   return active;
+}
+
+// --- Ausstehende Bestellungen (Lieferzeiten) --------------------------------
+// Waren, die bestellt aber noch nicht eingetroffen sind.
+// Lagerplatz wird sofort bei Bestellung reserviert; Goods arrive at arrivalDay.
+export interface PendingOrder {
+  id: string;
+  productId: string;
+  qty: number;
+  arrivalDay: number;
+  supplierId: string;
+  area: StorageArea;
+}
+
+// Gesamte unterwegs-Menge eines Produkts.
+export function pendingQtyOf(orders: PendingOrder[], productId: string): number {
+  return orders.filter((o) => o.productId === productId).reduce((s, o) => s + o.qty, 0);
+}
+
+// Reservierter Lagerplatz durch ausstehende Bestellungen, aufgeteilt nach Fläche.
+export function pendingCapOf(orders: PendingOrder[]): { trocken: number; frisch: number } {
+  return orders.reduce(
+    (acc, o) => { acc[o.area] += o.qty; return acc; },
+    { trocken: 0, frisch: 0 },
+  );
 }
 
 // --- Store ----------------------------------------------------------------
@@ -219,16 +487,40 @@ interface EconomyState {
   demandedByProduct: Record<string, number>;
   // Stammkunden-Verträge: Liste der Lieferanten-IDs mit aktivem Vertrag (max. 2).
   contracts: string[];
+  // Ausstehende Bestellungen (Lieferzeiten) — Lagerplatz sofort reserviert.
+  pendingOrders: PendingOrder[];
   // Name des Supermarkts — wird auf dem Startscreen gesetzt.
   firmName: string;
+  // Spieler-eigene VK-Preise (überschreiben Katalog-VK; leeres Objekt = Katalogpreise).
+  prices: Record<string, number>;
+  // Anzahl zusätzlicher Filialen (jede bringt 12 % des Tagesumsatzes als Passiveinkommen).
+  branches: number;
+  // Krisen-System
+  seasonCrisis: SeasonCrisis | null;
+  // Spielmodus
+  playMode: PlayMode | null;
+  missionId: string | null;
+  wonMission: boolean;
+  missionSeasonsCompleted: number;
+  // Spezialisierung (null = noch nicht gewählt)
+  specialization: Specialization | null;
+  // Konkurrenz-Aktionen: aktiv solange day <= …UntilDay (0 = inaktiv)
+  adUntilDay: number;
+  offensiveUntilDay: number;
 
-  startGame: (id: GameModeId, name?: string) => void;
+  startGame: (id: GameModeId | null, name?: string, playMode?: PlayMode, missionId?: string) => void;
   setFirmName: (name: string) => void;
   resetGame: () => void;
-  buy: (productId: string, qty: number, supplierId: string) => { ok: boolean; msg?: string };
+  closeWin: () => void;
+  setSpecialization: (spec: Specialization) => { ok: boolean; msg?: string };
+  launchAdCampaign: () => { ok: boolean; msg?: string };
+  launchPriceOffensive: () => { ok: boolean; msg?: string };
+  buy: (productId: string, qty: number, supplierId: string) => { ok: boolean; msg?: string; arrivalDay?: number; deliveryDays?: number };
   upgrade: (track: UpgradeTrack) => { ok: boolean; msg?: string };
   signContract: (supplierId: string) => { ok: boolean; msg?: string };
   cancelContract: (supplierId: string) => void;
+  setPrice: (productId: string, price: number) => void;
+  openBranch: () => { ok: boolean; msg?: string };
   advanceDay: () => void;
   closeRecap: () => void;
 }
@@ -270,10 +562,13 @@ const BASE_CAP = { trocken: 10000, frisch: 2500 };
 const CAP_STEP = { trocken: 4000, frisch: 1000 };
 
 // Aktuelle Kapazität beider Flächen aus den Ausbaustufen.
+// Vollsortimenter-Spezialisierung gibt +30 % auf beide Flächen.
 export function capacityOf(u?: Upgrades): { trocken: number; frisch: number } {
+  const spec = useEconomy.getState?.()?.specialization ?? null;
+  const m = specCapMult(spec);
   return {
-    trocken: BASE_CAP.trocken + (u?.lager ?? 0) * CAP_STEP.trocken,
-    frisch: BASE_CAP.frisch + (u?.flaeche ?? 0) * CAP_STEP.frisch,
+    trocken: Math.round((BASE_CAP.trocken + (u?.lager ?? 0) * CAP_STEP.trocken) * m),
+    frisch: Math.round((BASE_CAP.frisch + (u?.flaeche ?? 0) * CAP_STEP.frisch) * m),
   };
 }
 
@@ -332,8 +627,30 @@ export function effectiveSales(
       ? 3.0
       : 1.0;
 
+  // Preis-Elastizität: teurere Ware senkt die Nachfrage (und umgekehrt).
+  // Exponent hängt von der Spezialisierung ab: Discounter = sehr preissensibel,
+  // Premium = tolerant. Standard 1.5 (+20% Preis → −27% Nachfrage).
+  const spec = state.specialization;
+  const customVK = useEconomy.getState().prices[p.id];
+  const priceFactor = customVK ? Math.pow(p.vk / customVK, specPriceExp(spec)) : 1.0;
+
+  // Spezialisierungs-Nachfrage und aktive Konkurrenz-Aktionen.
+  const specMult = specDemandMult(spec);
+  const adMult = state.adUntilDay >= state.day ? AD_CAMPAIGN.demandMult : 1.0;
+  const offMult = state.offensiveUntilDay >= state.day ? PRICE_OFFENSIVE.demandMult : 1.0;
+
+  // Krisen-Effekt: Preiskampf senkt Nachfrage für betroffene Produkte
+  const crisis = state.seasonCrisis;
+  const preiskampfFactor =
+    crisis &&
+    crisis.type === "preiskampf" &&
+    isCrisisActive(crisis, state.day) &&
+    crisis.affectedProductIds?.includes(p.id)
+      ? 1 - CRISIS_DEMAND_PENALTY
+      : 1.0;
+
   return Math.round(
-    p.salesPerDay * kundenstrom(u) * satisfactionMultiplier(s) * sf * trendFactor * eventFactor,
+    p.salesPerDay * kundenstrom(u) * satisfactionMultiplier(s) * sf * trendFactor * eventFactor * priceFactor * preiskampfFactor * specMult * adMult * offMult,
   );
 }
 
@@ -345,15 +662,23 @@ export function projectDay(): {
   soldTrocken: number;
   soldFrisch: number;
 } {
-  const { batches, upgrades, day, satisfaction } = useEconomy.getState();
+  const { batches: rawBatches, upgrades, day, satisfaction, pendingOrders, prices, offensiveUntilDay } = useEconomy.getState();
   const { season, seasonDay } = dayToCalendar(day);
+  const sellMult = offensiveUntilDay >= day ? PRICE_OFFENSIVE.priceMult : 1.0;
+  // Heute ankommende Bestellungen einbeziehen (damit HUD-Umsatz mit Recap übereinstimmt).
+  const batches = { ...rawBatches };
+  for (const o of (pendingOrders ?? []).filter((o) => o.arrivalDay === day)) {
+    const list = batches[o.productId] ? [...batches[o.productId]] : [];
+    list.push({ qty: o.qty, age: 0 });
+    batches[o.productId] = list;
+  }
   let revenue = 0;
   let soldTrocken = 0;
   let soldFrisch = 0;
   for (const p of CATALOG) {
     const stock = stockOf(batches, p.id);
     const sell = Math.min(effectiveSales(p, upgrades, satisfaction, season, seasonDay), stock);
-    revenue += sell * p.vk;
+    revenue += sell * (prices[p.id] ?? p.vk) * sellMult;
     if (p.storage === "frisch") soldFrisch += sell;
     else soldTrocken += sell;
   }
@@ -544,18 +869,31 @@ export const useEconomy = create<EconomyState>()(
       history: [],
       demandedByProduct: {},
       contracts: [],
+      pendingOrders: [],
       firmName: "",
+      prices: {},
+      branches: 0,
+      seasonCrisis: null,
+      playMode: null,
+      missionId: null,
+      wonMission: false,
+      missionSeasonsCompleted: 0,
+      specialization: null,
+      adUntilDay: 0,
+      offensiveUntilDay: 0,
 
-      startGame: (id, name) => {
-        const mode = MODES.find((m) => m.id === id);
-        if (!mode) return;
+      startGame: (id, name, playMode = "endlos", missionId) => {
+        const missionDef = missionId ? MISSIONS.find((m) => m.id === missionId) : null;
+        const budget = missionDef
+          ? missionDef.budget
+          : (MODES.find((m) => m.id === id)?.budget ?? 10000);
         const firm = name?.trim() || "Mein Supermarkt";
         const offers = seedOffers();
         set({
           started: true,
           mode: id,
           firmName: firm,
-          cash: mode.budget,
+          cash: budget,
           day: 1,
           batches: {},
           stats: {},
@@ -574,6 +912,17 @@ export const useEconomy = create<EconomyState>()(
           history: [],
           demandedByProduct: {},
           contracts: [],
+          pendingOrders: [],
+          prices: {},
+          branches: 0,
+          seasonCrisis: null,
+          playMode: playMode ?? "endlos",
+          missionId: missionId ?? null,
+          wonMission: false,
+          missionSeasonsCompleted: 0,
+          specialization: null,
+          adUntilDay: 0,
+          offensiveUntilDay: 0,
         });
 
         // Konkurrenten zurücksetzen.
@@ -588,7 +937,7 @@ export const useEconomy = create<EconomyState>()(
           from: "Zentrale",
           subject: `Willkommen bei ${firm}!`,
           body:
-            `Herzlich willkommen bei ${firm}!\n\nDein Startkapital beträgt ${euro(mode.budget)}. ` +
+            `Herzlich willkommen bei ${firm}!\n\nDein Startkapital beträgt ${euro(budget)}. ` +
             `Deine Aufgabe: das Lager klug füllen und Gewinn machen — Marge × Drehzahl.\n\n` +
             `Achte auf Lagerplatz (Lager für Trockenware, Verkaufsfläche für Frischware) ` +
             `und auf die Haltbarkeit der Frischware. Viel Erfolg!`,
@@ -627,14 +976,91 @@ export const useEconomy = create<EconomyState>()(
           history: [],
           demandedByProduct: {},
           contracts: [],
+          pendingOrders: [],
+          prices: {},
+          branches: 0,
+          seasonCrisis: null,
+          playMode: null,
+          missionId: null,
+          wonMission: false,
+          missionSeasonsCompleted: 0,
+          specialization: null,
+          adUntilDay: 0,
+          offensiveUntilDay: 0,
         });
+      },
+
+      closeWin: () => set({ wonMission: false, missionId: null, playMode: "endlos" }),
+
+      setSpecialization: (spec) => {
+        const { specialization, branches, cash } = get();
+        if (branches < 1) {
+          return { ok: false, msg: "Spezialisierung wird erst nach deiner ersten Filiale freigeschaltet." };
+        }
+        if (specialization === spec) return { ok: false, msg: "Diese Ausrichtung ist bereits aktiv." };
+        // Erste Wahl gratis, jeder weitere Wechsel kostet eine Umbau-Gebühr.
+        const cost = specialization === null ? 0 : SPEC_SWITCH_COST;
+        if (cost > cash) {
+          return { ok: false, msg: `Strategiewechsel kostet ${euro(cost)} — nicht genug Geld.` };
+        }
+        const meta = SPECIALIZATIONS.find((s) => s.id === spec)!;
+        set({ specialization: spec, cash: +(cash - cost).toFixed(2) });
+        useMail.getState().receive({
+          from: "Zentrale",
+          subject: `${meta.emoji} Neue Ausrichtung: ${meta.name}`,
+          body:
+            `Dein Markt richtet sich neu aus: ${meta.name}.\n\n${meta.tagline}\n\n` +
+            `Vorteile:\n• ${meta.perks.join("\n• ")}\n\n` +
+            `Zu beachten: ${meta.tradeoff}` +
+            (cost > 0 ? `\n\nUmbaukosten: ${euro(cost)}.` : ""),
+          day: get().day,
+          kind: "info",
+        });
+        return { ok: true };
+      },
+
+      launchAdCampaign: () => {
+        const { cash, day, adUntilDay } = get();
+        if (adUntilDay >= day) return { ok: false, msg: "Es läuft bereits eine Werbekampagne." };
+        if (cash < AD_CAMPAIGN.cost) {
+          return { ok: false, msg: `Werbekampagne kostet ${euro(AD_CAMPAIGN.cost)} — nicht genug Geld.` };
+        }
+        set({ cash: +(cash - AD_CAMPAIGN.cost).toFixed(2), adUntilDay: day + AD_CAMPAIGN.days - 1 });
+        useMail.getState().receive({
+          from: "Marketing",
+          subject: "📢 Werbekampagne gestartet",
+          body:
+            `Deine Kampagne läuft für ${AD_CAMPAIGN.days} Tage.\n\n` +
+            `+30 % Laufkundschaft und der Druck der Konkurrenz wird spürbar zurückgedrängt.\n\n` +
+            `Kosten: ${euro(AD_CAMPAIGN.cost)}.`,
+          day,
+          kind: "info",
+        });
+        return { ok: true };
+      },
+
+      launchPriceOffensive: () => {
+        const { day, offensiveUntilDay } = get();
+        if (offensiveUntilDay >= day) return { ok: false, msg: "Es läuft bereits eine Preisoffensive." };
+        set({ offensiveUntilDay: day + PRICE_OFFENSIVE.days - 1 });
+        useMail.getState().receive({
+          from: "Marketing",
+          subject: "💥 Preisoffensive gestartet",
+          body:
+            `Für ${PRICE_OFFENSIVE.days} Tage verkaufst du alles 15 % günstiger.\n\n` +
+            `+25 % Nachfrage und du jagst der Konkurrenz Marktanteile ab — ` +
+            `dafür opferst du Marge. Achte auf deinen Gewinn!`,
+          day,
+          kind: "info",
+        });
+        return { ok: true };
       },
 
       buy: (productId, qty, supplierId) => {
         if (qty <= 0) return { ok: false, msg: "Menge muss größer als 0 sein." };
         const p = byId(productId);
         if (!p) return { ok: false, msg: "Produkt unbekannt." };
-        const { cash, batches, offers, day, upgrades, supplierMods, supplierOutage, contracts } = get();
+        const { cash, batches, offers, day, upgrades, supplierMods, supplierOutage, contracts, pendingOrders } = get();
         // Eigenmarken: nur kaufen wenn Upgrade aktiv.
         if (p.requiresUpgrade === "eigenmarke" && (upgrades.eigenmarke ?? 0) < 1) {
           return { ok: false, msg: "Eigenmarken-Regal noch nicht freigeschaltet." };
@@ -660,43 +1086,77 @@ export const useEconomy = create<EconomyState>()(
         const total = +(unitPrice(effBase, qty) * qty).toFixed(2);
         if (total > cash) return { ok: false, msg: "Nicht genug Geld auf dem Konto." };
 
-        // Lagerplatz prüfen: passt die Menge noch in die jeweilige Fläche?
+        // Lagerplatz prüfen: Bestand + ausstehende Bestellungen + neue Menge ≤ Kapazität.
         const used = usedCapacity(batches);
+        const pend = pendingCapOf(pendingOrders);
         const cap = capacityOf(upgrades);
         const area: StorageArea = p.storage === "frisch" ? "frisch" : "trocken";
-        const frei = cap[area] - used[area];
+        const frei = cap[area] - used[area] - pend[area];
         if (qty > frei) {
           const ort = area === "frisch" ? "in der Verkaufsfläche" : "im Lager";
           return {
             ok: false,
-            msg: `Kein Platz mehr ${ort} — nur noch ${frei} Stück frei.`,
+            msg: `Kein Platz mehr ${ort} — nur noch ${frei} Stück frei (inkl. unterwegs).`,
           };
         }
 
-        const list = batches[productId] ? [...batches[productId]] : [];
-        list.push({ qty, age: 0 }); // neue Charge, frisch eingekauft
+        const deliveryDays = sup?.deliveryDays ?? 1;
+        const lief = sup ?? SUPPLIERS[0];
+
+        if (deliveryDays === 0) {
+          // Sofortige Lieferung (Großmarkt-Abholung): direkt in Bestand.
+          const list = batches[productId] ? [...batches[productId]] : [];
+          list.push({ qty, age: 0 });
+          set({
+            cash: +(cash - total).toFixed(2),
+            batches: { ...batches, [productId]: list },
+          });
+          useMail.getState().receive({
+            from: lief.name,
+            subject: `Rechnung: ${qty}× ${p.name} — ${euro(total)}`,
+            body:
+              `Bestellbestätigung\n\n` +
+              `Artikel: ${p.name}\nMenge: ${qty} Stück\n` +
+              `Stückpreis: ${euro(unitPrice(effBase, qty))}\n` +
+              `Gesamtbetrag: ${euro(total)}\n\n` +
+              `Abholung: sofort (Großmarkt). Ware ist eingetroffen und ` +
+              `${area === "frisch" ? "in der Verkaufsfläche" : "im Lager"} eingelagert.\n\n` +
+              `Vielen Dank!\n${lief.name}`,
+            day,
+            kind: "rechnung",
+          });
+          return { ok: true, arrivalDay: day, deliveryDays: 0 };
+        }
+
+        // Verzögerte Lieferung: Bestellung in Warteschlange.
+        const arrivalDay = day + deliveryDays;
+        const order: PendingOrder = {
+          id: `${day}-${productId}-${supplierId}-${Date.now()}`,
+          productId,
+          qty,
+          arrivalDay,
+          supplierId,
+          area,
+        };
         set({
           cash: +(cash - total).toFixed(2),
-          batches: { ...batches, [productId]: list },
+          pendingOrders: [...pendingOrders, order],
         });
-
-        // Bestellbestätigung / Rechnung ins Postfach (bereits bezahlt).
-        const lief = SUPPLIERS.find((s) => s.id === supplierId) ?? SUPPLIERS[0];
         useMail.getState().receive({
           from: lief.name,
-          subject: `Rechnung: ${qty}× ${p.name} — ${euro(total)}`,
+          subject: `Bestellung: ${qty}× ${p.name} — ${euro(total)}`,
           body:
             `Bestellbestätigung\n\n` +
             `Artikel: ${p.name}\nMenge: ${qty} Stück\n` +
             `Stückpreis: ${euro(unitPrice(effBase, qty))}\n` +
             `Gesamtbetrag: ${euro(total)}\n\n` +
-            `Betrag wurde direkt vom Konto beglichen. Die Ware ist eingetroffen ` +
-            `und ${area === "frisch" ? "in der Verkaufsfläche" : "im Lager"} eingelagert.\n\n` +
+            `Lieferung: Tag ${arrivalDay} (in ${deliveryDays} Tag${deliveryDays > 1 ? "en" : ""}).\n` +
+            `Betrag wurde bereits beglichen. Lagerplatz ist reserviert.\n\n` +
             `Vielen Dank für Ihren Einkauf!\n${lief.name}`,
           day,
           kind: "rechnung",
         });
-        return { ok: true };
+        return { ok: true, arrivalDay, deliveryDays };
       },
 
       upgrade: (track) => {
@@ -745,15 +1205,73 @@ export const useEconomy = create<EconomyState>()(
         set({ contracts: contracts.filter((id) => id !== supplierId) });
       },
 
+      setPrice: (productId, price) =>
+        set((s) => ({ prices: { ...s.prices, [productId]: price } })),
+
+      openBranch: () => {
+        const { cash, branches, lastRevenue, day, playMode, missionId, wonMission, stats } = get();
+        const cost = branchCost(branches);
+        if (cash < cost) return { ok: false, msg: `Noch ${euro(cost - cash)} fehlen für die Expansion.` };
+        const newBranches = branches + 1;
+        set({ cash: +(cash - cost).toFixed(2), branches: newBranches });
+        useMail.getState().receive({
+          from: "Immobilienmakler Schmidt",
+          subject: `🏪 Filiale ${newBranches} eröffnet!`,
+          body:
+            `Herzlichen Glückwunsch!\n\nIhre Filiale ${newBranches} ist ab sofort eröffnet.\n\n` +
+            `Sie generiert täglich 12 % Ihres gestrigen Tagesumsatzes als Passiveinkommen — ` +
+            `gestern wären das ${euro(+(lastRevenue * 0.12).toFixed(2))} gewesen.\n\n` +
+            `Viel Erfolg bei der weiteren Expansion!\n\nIhr Immobilienmakler Schmidt`,
+          day,
+          kind: "info",
+        });
+        // Win-Condition prüfen (Kampagne: branches / empire)
+        if (playMode === "kampagne" && missionId && !wonMission) {
+          const mission = MISSIONS.find((m) => m.id === missionId);
+          if (mission) {
+            const wc = mission.winCondition;
+            const totalRev = Object.values(stats).reduce((s, r) => s + r.revenue, 0);
+            if (
+              (wc.type === "branches" && newBranches >= wc.count) ||
+              (wc.type === "empire" && newBranches >= wc.branches && totalRev >= wc.yearRevenue)
+            ) {
+              set({ wonMission: true });
+            }
+          }
+        }
+        return { ok: true };
+      },
+
       advanceDay: () => {
-        const { batches, stats, cash, day, offers, upgrades, lastRevenue, satisfaction,
-          supplierMods, seasonEvent, supplierOutage, history, demandedByProduct } = get();
+        const { batches: rawBatches, stats, cash, day, offers, upgrades, lastRevenue, satisfaction,
+          supplierMods, seasonEvent, supplierOutage, history, demandedByProduct, pendingOrders,
+          prices, branches, seasonCrisis, playMode, missionId, wonMission, missionSeasonsCompleted,
+          specialization, adUntilDay, offensiveUntilDay } = get();
         const { season, seasonDay } = dayToCalendar(day);
+
+        // Aktive Konkurrenz-Aktionen heute?
+        const adActive = adUntilDay >= day;
+        const offensiveActive = offensiveUntilDay >= day;
+        // Preisoffensive senkt alle Verkaufspreise (Margen-Opfer für Marktanteil).
+        const sellMult = offensiveActive ? PRICE_OFFENSIVE.priceMult : 1.0;
 
         // Konkurrenten für diesen Tag ticken lassen (Stärke + Nachrichten).
         useCompetitor.getState().advance(day);
         // Marktdruck: Konkurrenten reduzieren die effektive Nachfrage leicht (max. 12 %).
-        const competitorPressure = useCompetitor.getState().marketPressure();
+        // Werbung/Preisoffensive drängen diesen Druck zurück.
+        let competitorPressure = useCompetitor.getState().marketPressure();
+        if (adActive) competitorPressure *= AD_CAMPAIGN.pressureMult;
+        if (offensiveActive) competitorPressure *= PRICE_OFFENSIVE.pressureMult;
+
+        // Lieferungen ausliefern: Bestellungen die heute ankommen → in Bestand.
+        const arrivingOrders = pendingOrders.filter((o) => o.arrivalDay === day);
+        const batches = { ...rawBatches };
+        for (const o of arrivingOrders) {
+          const list = batches[o.productId] ? [...batches[o.productId]] : [];
+          list.push({ qty: o.qty, age: 0 });
+          batches[o.productId] = list;
+        }
+        const remainingPending = pendingOrders.filter((o) => o.arrivalDay !== day);
         const newBatches: Record<string, Batch[]> = {};
         const newStats: Record<string, ProductStat> = { ...stats };
         const newDemandedByProduct: Record<string, number> = { ...demandedByProduct };
@@ -785,7 +1303,7 @@ export const useEconomy = create<EconomyState>()(
             b.qty -= take;
             toSell -= take;
             soldThis += take;
-            revenue += take * p.vk;
+            revenue += take * (prices[p.id] ?? p.vk) * sellMult;
             stat.sold += take;
             stat.revenue += take * p.vk;
             stat.ageSum += take * b.age; // Alter beim Verkauf -> Ø Lagerdauer
@@ -801,7 +1319,10 @@ export const useEconomy = create<EconomyState>()(
 
           // 3) Verderb: nur Frischware, deren effektive Haltbarkeit (inkl. Kühltheke) erreicht.
           if (p.storage === "frisch" && p.shelfLifeDays) {
-            const shelf = effectiveShelfLife(p, upgrades);
+            const baseShelf = effectiveShelfLife(p, upgrades);
+            // Hitzewelle halbiert die Haltbarkeit aller Frischprodukte
+            const hitzeFactor = isCrisisActive(seasonCrisis, day) && seasonCrisis?.type === "hitzewelle" ? 0.5 : 1.0;
+            const shelf = Math.max(1, Math.floor(baseShelf * hitzeFactor));
             const personalFactor = 1 - (upgrades.personal ?? 0) * 0.10;
             const survivors: Batch[] = [];
             for (const b of list) {
@@ -913,6 +1434,18 @@ export const useEconomy = create<EconomyState>()(
           notifiedEvent = { ...newSeasonEvent, notified: true };
         }
 
+        // --- Krisen-Logik ------------------------------------------------
+        // Abgelaufene Krise bereinigen; bei Saisonwechsel neue rollen.
+        let newSeasonCrisis: SeasonCrisis | null = day >= (seasonCrisis?.endDay ?? -1) ? null : seasonCrisis;
+        if (nextCal.season !== season) {
+          newSeasonCrisis = Math.random() < 0.7 ? rollCrisis(day + 1, nextCal.season) : null;
+        }
+        // Vorankündigung 1 Tag vorher senden (Mail erscheint morgen, Trigger übermorgen)
+        if (newSeasonCrisis && !newSeasonCrisis.announced && day + 1 === newSeasonCrisis.triggerDay - 1) {
+          sendCrisisAnnouncementMail(newSeasonCrisis, day + 1);
+          newSeasonCrisis = { ...newSeasonCrisis, announced: true };
+        }
+
         // --- Neue Lieferantenpreise (alle 3 Tage) ----------------------------
         const newSupplierMods = (day + 1) % 3 === 1 ? rollSupplierMods() : supplierMods;
 
@@ -921,6 +1454,12 @@ export const useEconomy = create<EconomyState>()(
 
         // --- Lieferanten-Ausfall ---------------------------------------------
         const newOutage = maybeSupplierOutage(supplierOutage, day + 1) ?? {};
+        // Lieferskandal: Lieferant für die gesamte Krisen-Dauer sperren
+        if (newSeasonCrisis?.type === "lieferskandal" &&
+            day + 1 === newSeasonCrisis.triggerDay &&
+            newSeasonCrisis.affectedSupplierId) {
+          newOutage[newSeasonCrisis.affectedSupplierId] = newSeasonCrisis.endDay;
+        }
 
         // --- Ziel-Fortschritt für heute aktualisieren --------------------
         const goalDailyBonus = useGoal.getState().updateProgress({
@@ -934,7 +1473,9 @@ export const useEconomy = create<EconomyState>()(
 
         // Tageslohn abziehen und per Mail warnen wenn Konto kritisch.
         const wage = dailyWage(upgrades);
-        const cashAfterSales = +(cash + revenue + goalDailyBonus).toFixed(2);
+        // Passiveinkommen aus Filialen: 12 % des gestrigen Tagesumsatzes pro Filiale.
+        const branchIncome = +(branches * 0.12 * lastRevenue).toFixed(2);
+        const cashAfterSales = +(cash + revenue + goalDailyBonus + branchIncome).toFixed(2);
         const cashAfter = +(cashAfterSales - wage).toFixed(2);
         if (wage > 0 && cashAfter < 500) {
           useMail.getState().receive({
@@ -968,7 +1509,7 @@ export const useEconomy = create<EconomyState>()(
           served: unitsSold,
           missedByProduct,
           upgrades,
-          personalBonus: (upgrades.personal ?? 0) * 3,
+          personalBonus: (upgrades.personal ?? 0) * 3 + specSatBonus(specialization),
         });
 
         // Konkurrenz-Reaktion prüfen: wenn Spieler stark, reagiert ein Konkurrent per Mail.
@@ -1003,10 +1544,42 @@ export const useEconomy = create<EconomyState>()(
           useGoal.getState().triggerYearEnd(newHistory);
         }
 
+        // --- Win-Condition prüfen (Kampagnenmodus) ---------------------------
+        let didWin = wonMission;
+        let newMissionSeasonsCompleted = missionSeasonsCompleted;
+        if (!didWin && playMode === "kampagne" && missionId) {
+          const mission = MISSIONS.find((m) => m.id === missionId);
+          if (mission) {
+            const wc = mission.winCondition;
+            // year_revenue: am Jahresende prüfen
+            if (wc.type === "year_revenue" && yearChanging) {
+              const thisYear = dayToCalendar(day).year;
+              if (thisYear >= wc.year) {
+                const yearRev = newHistory
+                  .filter((r) => dayToCalendar(r.day).year === thisYear)
+                  .reduce((s, r) => s + r.revenue, 0);
+                if (yearRev >= wc.target) didWin = true;
+              }
+            }
+            // branches & empire: Fallback (wird auch in openBranch geprüft)
+            if (wc.type === "branches" && branches >= wc.count) didWin = true;
+            if (wc.type === "empire") {
+              const totalRev = Object.values(newStats).reduce((s, r) => s + r.revenue, 0);
+              if (branches >= wc.branches && totalRev >= wc.yearRevenue) didWin = true;
+            }
+            // survive_seasons: am Saisonende prüfen
+            if (wc.type === "survive_seasons" && seasonChanging && newSat >= wc.minSat) {
+              newMissionSeasonsCompleted += 1;
+              if (newMissionSeasonsCompleted >= wc.count) didWin = true;
+            }
+          }
+        }
+
         set({
           batches: newBatches,
           stats: newStats,
           offers: newOffers,
+          pendingOrders: remainingPending,
           cash: +(cashAfter + goalSeasonBonus).toFixed(2),
           day: day + 1,
           lastRevenue: +revenue.toFixed(2),
@@ -1019,8 +1592,11 @@ export const useEconomy = create<EconomyState>()(
           supplierOutage: newOutage,
           history: newHistory,
           demandedByProduct: newDemandedByProduct,
+          seasonCrisis: newSeasonCrisis,
+          wonMission: didWin,
+          missionSeasonsCompleted: newMissionSeasonsCompleted,
           recap: {
-            day, // der Tag, der gerade abgeschlossen wurde
+            day,
             revenue: +revenue.toFixed(2),
             spoiledValue: +spoiledValue.toFixed(2),
             prevRevenue: +lastRevenue.toFixed(2),
@@ -1030,6 +1606,7 @@ export const useEconomy = create<EconomyState>()(
             prevSatisfaction: satisfaction,
             missedUnits,
             voices,
+            branchIncome,
           },
           recapOpen: true,
         });
@@ -1039,7 +1616,7 @@ export const useEconomy = create<EconomyState>()(
     }),
     {
       name: "retail-tycoon-save",
-      version: 8,
+      version: 11,
       migrate: (raw) => {
         const s = (raw ?? {}) as Record<string, unknown>;
         const rawUpgrades = (s.upgrades ?? {}) as Partial<Upgrades>;
@@ -1064,6 +1641,17 @@ export const useEconomy = create<EconomyState>()(
           history: (s.history as DayRecord[]) ?? [],
           demandedByProduct: (s.demandedByProduct as Record<string, number>) ?? {},
           contracts: (s.contracts as string[]) ?? [],
+          pendingOrders: (s.pendingOrders as PendingOrder[]) ?? [],
+          prices: (s.prices as Record<string, number>) ?? {},
+          branches: (s.branches as number) ?? 0,
+          seasonCrisis: (s.seasonCrisis as SeasonCrisis | null) ?? null,
+          playMode: (s.playMode as PlayMode | null) ?? null,
+          missionId: (s.missionId as string | null) ?? null,
+          wonMission: (s.wonMission as boolean) ?? false,
+          missionSeasonsCompleted: (s.missionSeasonsCompleted as number) ?? 0,
+          specialization: (s.specialization as Specialization | null) ?? null,
+          adUntilDay: (s.adUntilDay as number) ?? 0,
+          offensiveUntilDay: (s.offensiveUntilDay as number) ?? 0,
           recap: null,
           recapOpen: false,
         };
@@ -1089,6 +1677,17 @@ export const useEconomy = create<EconomyState>()(
         history: s.history,
         demandedByProduct: s.demandedByProduct,
         contracts: s.contracts,
+        pendingOrders: s.pendingOrders,
+        prices: s.prices,
+        branches: s.branches,
+        seasonCrisis: s.seasonCrisis,
+        playMode: s.playMode,
+        missionId: s.missionId,
+        wonMission: s.wonMission,
+        missionSeasonsCompleted: s.missionSeasonsCompleted,
+        specialization: s.specialization,
+        adUntilDay: s.adUntilDay,
+        offensiveUntilDay: s.offensiveUntilDay,
         recap: s.recap,
       }),
     },

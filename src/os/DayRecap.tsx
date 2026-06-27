@@ -94,6 +94,12 @@ export function DayRecap() {
             <span className="recap-row-label">📦 Verkaufte Stück</span>
             <span className="recap-row-value">{recap.unitsSold}</span>
           </div>
+          {recap.branchIncome > 0 && (
+            <div className="recap-row">
+              <span className="recap-row-label">🏪 Filial-Passiveinkommen</span>
+              <span className="recap-row-value" style={{ color: "#2e7d32" }}>+{euro(recap.branchIncome)}</span>
+            </div>
+          )}
         </div>
 
         {/* Kundenzufriedenheit */}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EventBus, Events } from "../game/EventBus";
-import { useEconomy, projectDay } from "../economy/economyStore";
+import { useEconomy, projectDay, isCrisisActive } from "../economy/economyStore";
 import { euro } from "../economy/catalog";
 import "./dayhud.css";
 
@@ -9,8 +9,14 @@ const DAY_MS = 18000;
 
 // Eingeblendet, während der Tag sichtbar abläuft: Tagesuhr/Fortschritt,
 // hochzählender Umsatz und ein „Überspringen"-Knopf.
+const CRISIS_ICONS: Record<string, string> = {
+  hitzewelle: "☀️", preiskampf: "⚔️", lieferskandal: "🚨",
+};
+
 export function DayHUD() {
   const day = useEconomy((s) => s.day);
+  const seasonCrisis = useEconomy((s) => s.seasonCrisis);
+  const crisisActive = isCrisisActive(seasonCrisis, day);
   // Ziel-Umsatz einmalig beim Start schätzen (zählt von 0 dorthin hoch).
   const target = useRef(projectDay().revenue);
   const start = useRef(performance.now());
@@ -32,7 +38,14 @@ export function DayHUD() {
   return (
     <div className="dayhud">
       <div className="dayhud-row">
-        <span className="dayhud-day">🛒 Tag {day} läuft …</span>
+        <span className="dayhud-day">
+          🛒 Tag {day} läuft …
+          {crisisActive && seasonCrisis && (
+            <span className="dayhud-crisis" title={`Krise: ${seasonCrisis.type}`}>
+              {CRISIS_ICONS[seasonCrisis.type]}
+            </span>
+          )}
+        </span>
         <span className="dayhud-rev">{euro(revenue)}</span>
         <button
           className="dayhud-skip"

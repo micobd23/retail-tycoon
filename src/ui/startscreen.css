@@ -114,3 +114,79 @@
   font-size: 13px;
   color: #90a4ae;
 }
+
+/* ── 2-Step-Flow Erweiterungen ──────────────────────── */
+.start-section-title {
+  font-size: 15px;
+  color: #b0bec5;
+  margin: 0 auto 20px;
+}
+
+.two-col {
+  grid-template-columns: repeat(2, 1fr) !important;
+  max-width: 580px;
+  margin: 0 auto;
+}
+
+.mode-tile.big {
+  padding: 26px 20px;
+}
+.mode-tile.big .mode-emoji {
+  font-size: 44px;
+}
+.mode-tile.big .mode-name {
+  font-size: 20px;
+}
+.mode-tile.big .mode-desc {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mission-tile .mission-flavor {
+  font-size: 11px;
+  font-style: italic;
+  color: #80cbc4;
+  line-height: 1.4;
+}
+
+.start-summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 14px;
+  color: #cfd8dc;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.start-btn {
+  display: block;
+  margin: 0 auto 14px;
+  padding: 14px 40px;
+  background: linear-gradient(135deg, #1de9b6, #00b0ff);
+  border: none;
+  border-radius: 12px;
+  color: #000;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.start-btn:hover {
+  transform: translateY(-2px);
+  opacity: 0.92;
+}
+
+.start-back {
+  background: transparent;
+  border: none;
+  color: #78909c;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 6px;
+  text-decoration: underline;
+}
+.start-back:hover {
+  color: #b0bec5;
+}

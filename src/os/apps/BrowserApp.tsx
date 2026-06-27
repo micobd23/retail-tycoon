@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useCompetitor } from "../../economy/competitorStore";
-import { useEconomy } from "../../economy/economyStore";
+import { useEconomy, AD_CAMPAIGN, PRICE_OFFENSIVE } from "../../economy/economyStore";
+import { euro } from "../../economy/catalog";
 import "./browser.css";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -39,6 +41,16 @@ export function BrowserApp() {
   const firmName = useEconomy((s) => s.firmName);
   const lastRevenue = useEconomy((s) => s.lastRevenue);
   const started = useEconomy((s) => s.started);
+  const day = useEconomy((s) => s.day);
+  const cash = useEconomy((s) => s.cash);
+  const adUntilDay = useEconomy((s) => s.adUntilDay);
+  const offensiveUntilDay = useEconomy((s) => s.offensiveUntilDay);
+  const launchAd = useEconomy((s) => s.launchAdCampaign);
+  const launchOffensive = useEconomy((s) => s.launchPriceOffensive);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  const adActive = adUntilDay >= day;
+  const offensiveActive = offensiveUntilDay >= day;
 
   // Marktanteile berechnen
   const playerStr = getPlayerStrength(lastRevenue);
@@ -105,6 +117,64 @@ export function BrowserApp() {
                   </div>
                 );
               })}
+            </div>
+          </section>
+
+          {/* Aktionen gegen die Konkurrenz */}
+          <section className="browser-section">
+            <h3 className="browser-section-title">⚔️ Deine Gegenmaßnahmen</h3>
+            {actionMsg && (
+              <div style={{ background: "#fff3e0", border: "1px solid #ffcc80", borderRadius: 8, padding: "8px 12px", fontSize: 13, marginBottom: 10 }}>
+                ⚠️ {actionMsg}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+              {/* Werbekampagne */}
+              <div style={{ background: "#fff", border: `2px solid ${adActive ? "#42a5f5" : "#cfd8dc"}`, borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 24 }}>📢</span>
+                  <span style={{ fontWeight: 700, color: "#263238" }}>Werbekampagne</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#607d8b", lineHeight: 1.45 }}>
+                  +30 % Laufkundschaft & weniger Konkurrenzdruck für {AD_CAMPAIGN.days} Tage.
+                </div>
+                {adActive ? (
+                  <div style={{ marginTop: "auto", padding: "8px 0", textAlign: "center", color: "#1565c0", fontWeight: 700, fontSize: 13 }}>
+                    🔵 Läuft noch {adUntilDay - day + 1} {adUntilDay - day + 1 === 1 ? "Tag" : "Tage"}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { const r = launchAd(); setActionMsg(r.ok ? null : r.msg ?? null); }}
+                    disabled={cash < AD_CAMPAIGN.cost}
+                    style={{ marginTop: "auto", padding: "9px 0", borderRadius: 8, border: "none", background: cash >= AD_CAMPAIGN.cost ? "#1565c0" : "#cfd8dc", color: "#fff", fontWeight: 700, fontSize: 14, cursor: cash >= AD_CAMPAIGN.cost ? "pointer" : "default" }}
+                  >
+                    Starten ({euro(AD_CAMPAIGN.cost)})
+                  </button>
+                )}
+              </div>
+
+              {/* Preisoffensive */}
+              <div style={{ background: "#fff", border: `2px solid ${offensiveActive ? "#ef5350" : "#cfd8dc"}`, borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 24 }}>💥</span>
+                  <span style={{ fontWeight: 700, color: "#263238" }}>Preisoffensive</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#607d8b", lineHeight: 1.45 }}>
+                  −15 % Preise, +25 % Nachfrage & Marktanteil-Klau für {PRICE_OFFENSIVE.days} Tage. Kostet Marge!
+                </div>
+                {offensiveActive ? (
+                  <div style={{ marginTop: "auto", padding: "8px 0", textAlign: "center", color: "#c62828", fontWeight: 700, fontSize: 13 }}>
+                    🔴 Läuft noch {offensiveUntilDay - day + 1} {offensiveUntilDay - day + 1 === 1 ? "Tag" : "Tage"}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { const r = launchOffensive(); setActionMsg(r.ok ? null : r.msg ?? null); }}
+                    style={{ marginTop: "auto", padding: "9px 0", borderRadius: 8, border: "none", background: "#c62828", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+                  >
+                    Starten (gratis, kostet Marge)
+                  </button>
+                )}
+              </div>
             </div>
           </section>
 
