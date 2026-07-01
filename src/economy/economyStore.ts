@@ -4,52 +4,57 @@ import {
   CATALOG,
   unitPrice,
   supplierBaseEk,
-  cheapestSupplier,
   currentSeasonWave,
   SUPPLIERS,
   euro,
   dayToCalendar,
+  stockOf,
   type Product,
   type Season,
   type DayRecord,
+  type Batch,
 } from "./catalog";
 import { useMail } from "./mailStore";
 import { useGoal } from "./goalStore";
 import { useCompetitor } from "./competitorStore";
 import { EventBus, Events } from "../game/EventBus";
+import { MODES, MISSIONS, type GameModeId, type PlayMode, type MissionDef } from "./missions";
+import {
+  SPECIALIZATIONS, SPEC_SWITCH_COST, specDemandMult, specPriceExp, specCapMult, specSatBonus,
+  type Specialization,
+} from "./specializations";
+import {
+  STORE_THEMES, THEME_SWITCH_COST, themeDemandMult, themeSatBonus, themeFloorTint,
+  type StoreTheme,
+} from "./themes";
+import {
+  isCrisisActive, CRISIS_DEMAND_PENALTY,
+  type SeasonCrisis, type CrisisType,
+} from "./crises";
+import {
+  emptyUpgrades, capacityOf, kundenstrom, dailyWage, effectiveShelfLife, upgradeCost,
+  usedCapacity, UPGRADE_META, type StorageArea, type Upgrades, type UpgradeTrack,
+} from "./upgrades";
+import {
+  seedOffers, offerMail, rollSupplierMods, rollTrendProduct, makeSeasonEvent, rotateDailyMarket,
+  type Offer, type SeasonEvent,
+} from "./dayRotation";
+import { creditLimit, CREDIT_INTEREST_RATE, branchCost, settleDayFinance } from "./finance";
 
-// --- Spielmodi (nur unterschiedliches Startbudget) -----------------------
-export type GameModeId =
-  | "neuling"
-  | "anfaenger"
-  | "fortgeschritten"
-  | "profi"
-  | "workaholic";
-
-export interface GameMode {
-  id: GameModeId;
-  name: string;
-  emoji: string;
-  budget: number;
-  desc: string;
-}
-
-export const MODES: GameMode[] = [
-  { id: "neuling", name: "Neuling", emoji: "🐣", budget: 25000, desc: "Dickes Polster, kaum Druck — zum Ausprobieren." },
-  { id: "anfaenger", name: "Anfänger", emoji: "🌱", budget: 15000, desc: "Bequemer Start mit Sicherheitsnetz." },
-  { id: "fortgeschritten", name: "Fortgeschrittener", emoji: "📈", budget: 10000, desc: "Ausgewogen — haushalten nötig." },
-  { id: "profi", name: "Profi", emoji: "💼", budget: 5000, desc: "Knappes Kapital, kluge Einkäufe gefragt." },
-  { id: "workaholic", name: "Workaholic", emoji: "🔥", budget: 2000, desc: "Minimal — jeder Euro zählt." },
-];
+// Re-exportiert, damit bestehende Importe aus "./economyStore" unverändert bleiben.
+export {
+  MODES, MISSIONS, SPECIALIZATIONS, SPEC_SWITCH_COST, specDemandMult, specPriceExp,
+  specCapMult, specSatBonus, STORE_THEMES, THEME_SWITCH_COST, themeDemandMult, themeSatBonus,
+  themeFloorTint, isCrisisActive, stockOf,
+  capacityOf, kundenstrom, dailyWage, effectiveShelfLife, upgradeCost, usedCapacity, UPGRADE_META,
+  creditLimit, CREDIT_INTEREST_RATE, branchCost,
+};
+export type {
+  GameModeId, PlayMode, MissionDef, Specialization, StoreTheme, SeasonCrisis, CrisisType,
+  Batch, StorageArea, Upgrades, UpgradeTrack, Offer, SeasonEvent,
+};
 
 // --- Daten-Strukturen -----------------------------------------------------
-
-// Eine Charge: beim Einkauf entsteht ein "Posten" mit Menge und Alter (Tage).
-// Frischware verdirbt, wenn das Alter die Haltbarkeit erreicht.
-export interface Batch {
-  qty: number;
-  age: number; // Tage im Bestand
-}
 
 // Lebenslange Statistik je Produkt (für die spätere Statistik-Ansicht).
 export interface ProductStat {
@@ -85,166 +90,6 @@ export interface DayRecap {
   branchIncome: number; // Passiveinkommen aus Filialen an diesem Tag
 }
 
-// Ein befristetes Angebot: prozentualer EK-Rabatt für ein Produkt, X Tage gültig.
-export interface Offer {
-  rabatt: number; // z.B. 0.2 = −20 %
-  daysLeft: number;
-}
-
-// Ein Saison-Event: einmaliger Nachfrage-Spike für ein Produkt, mit Mail-Vorankündigung.
-export interface SeasonEvent {
-  triggerDay: number; // globaler Tag, an dem der Spike passiert
-  productId: string;
-  notified: boolean; // wurde die Vorankündigungs-Mail schon gesendet?
-}
-
-const RABATTE = [0.1, 0.15, 0.2, 0.25];
-
-// --- Krisen-System -------------------------------------------------------
-// Einmal pro Saison kann eine Krise auftreten (70 % Chance).
-// Jede Krise hat einen Trigger-Tag, eine Dauer und typspezifische Effekte.
-export type CrisisType = "hitzewelle" | "preiskampf" | "lieferskandal";
-
-export interface SeasonCrisis {
-  type: CrisisType;
-  triggerDay: number;   // erster Tag der Krise
-  endDay: number;       // letzter Tag (inkl.)
-  announced: boolean;   // Ankündigungs-Mail bereits gesendet?
-  affectedProductIds?: string[];  // preiskampf: betroffene Produkte
-  affectedSupplierId?: string;    // lieferskandal: gesperrter Lieferant
-}
-
-export function isCrisisActive(crisis: SeasonCrisis | null, day: number): boolean {
-  return !!crisis && day >= crisis.triggerDay && day <= crisis.endDay;
-}
-
-const CRISIS_DEMAND_PENALTY = 0.25; // preiskampf: −25 % Nachfrage für betroffene Produkte
-
-// --- Spielmodi & Missionen -----------------------------------------------
-export type PlayMode = "kampagne" | "endlos";
-
-export type WinConditionDef =
-  | { type: "year_revenue"; year: number; target: number }
-  | { type: "branches"; count: number }
-  | { type: "survive_seasons"; count: number; minSat: number }
-  | { type: "empire"; branches: number; yearRevenue: number };
-
-export interface MissionDef {
-  id: string;
-  emoji: string;
-  title: string;
-  flavor: string;
-  desc: string;
-  budget: number;
-  winCondition: WinConditionDef;
-}
-
-export const MISSIONS: MissionDef[] = [
-  {
-    id: "mission1",
-    emoji: "🌱",
-    title: "Der erste Laden",
-    flavor: "Du hast einen kleinen Supermarkt geerbt. Beweise, dass du das Zeug zum Händler hast.",
-    desc: "50.000 € Gesamtumsatz im ersten Jahr erreichen.",
-    budget: 10000,
-    winCondition: { type: "year_revenue", year: 1, target: 50000 },
-  },
-  {
-    id: "mission2",
-    emoji: "🏬",
-    title: "Die Expansion",
-    flavor: "Dein Stammladen läuft — jetzt baust du die Kette aus.",
-    desc: "3 Filialen eröffnen.",
-    budget: 8000,
-    winCondition: { type: "branches", count: 3 },
-  },
-  {
-    id: "mission3",
-    emoji: "⚡",
-    title: "Krisenfest",
-    flavor: "Der Markt ist turbulent. Zeig, dass dein Laden auch schwere Zeiten übersteht.",
-    desc: "3 Saisonen mit ≥ 75 % Kundenzufriedenheit am Ende überstehen.",
-    budget: 5000,
-    winCondition: { type: "survive_seasons", count: 3, minSat: 75 },
-  },
-  {
-    id: "mission4",
-    emoji: "👑",
-    title: "Das Imperium",
-    flavor: "Du bist bereit für die große Liga. Baue ein wahres Supermarkt-Imperium.",
-    desc: "10 Filialen UND 500.000 € Gesamtumsatz.",
-    budget: 15000,
-    winCondition: { type: "empire", branches: 10, yearRevenue: 500000 },
-  },
-];
-
-// --- Spezialisierungspfade ------------------------------------------------
-// Strategische Ausrichtung des Ladens. Spiegelt die Konkurrenten-Typen wider
-// (Discounter vs. Bio) und gibt jedem Pfad klare Vor- und Nachteile.
-export type Specialization = "discounter" | "premium" | "vollsortimenter";
-
-export interface SpecMeta {
-  id: Specialization;
-  emoji: string;
-  name: string;
-  tagline: string;
-  perks: string[];
-  tradeoff: string;
-}
-
-export const SPECIALIZATIONS: SpecMeta[] = [
-  {
-    id: "discounter",
-    emoji: "🏷️",
-    name: "Discounter",
-    tagline: "Masse statt Marge — der Laden für jeden Geldbeutel.",
-    perks: ["+15 % Laufkundschaft", "Volle Läden schrecken niemanden ab"],
-    tradeoff: "Kunden sind sehr preissensibel — höhere VK-Preise vertreiben sie schnell.",
-  },
-  {
-    id: "premium",
-    emoji: "🌿",
-    name: "Bio & Premium",
-    tagline: "Qualität hat ihren Preis — und die Kunden zahlen ihn gern.",
-    perks: ["Kunden zahlen höhere Preise klaglos", "+ dauerhafte Zufriedenheit"],
-    tradeoff: "Weniger Laufkundschaft (−12 %) — du lebst von wenigen, treuen Kunden.",
-  },
-  {
-    id: "vollsortimenter",
-    emoji: "🛒",
-    name: "Vollsortimenter",
-    tagline: "Alles unter einem Dach — der verlässliche Allrounder.",
-    perks: ["+30 % Lagerkapazität (beide Flächen)", "+5 % Nachfrage über alle Kategorien"],
-    tradeoff: "Keine Spitzen-Boni — solide, aber ohne Extrem-Stärken.",
-  },
-];
-
-// Kosten für einen späteren Strategiewechsel (die erste Wahl ist gratis).
-export const SPEC_SWITCH_COST = 2000;
-
-// Spezialisierungs-Effekte (zentral, damit UI und Logik dieselbe Quelle nutzen).
-export function specDemandMult(spec: Specialization | null): number {
-  switch (spec) {
-    case "discounter": return 1.15;
-    case "premium": return 0.88;
-    case "vollsortimenter": return 1.05;
-    default: return 1.0;
-  }
-}
-export function specPriceExp(spec: Specialization | null): number {
-  switch (spec) {
-    case "discounter": return 2.3; // sehr preissensibel
-    case "premium": return 0.8;    // tolerant gegenüber hohen Preisen
-    default: return 1.5;           // mittlere Elastizität
-  }
-}
-export function specCapMult(spec: Specialization | null): number {
-  return spec === "vollsortimenter" ? 1.3 : 1.0;
-}
-export function specSatBonus(spec: Specialization | null): number {
-  return spec === "premium" ? 3 : 0; // täglicher Zufriedenheits-Bonus
-}
-
 // --- Konkurrenz-Aktionen (Feature 4) --------------------------------------
 // Aktive Hebel gegen die Konkurrenz: kosten Geld/Marge, wirken zeitlich begrenzt.
 export const AD_CAMPAIGN = {
@@ -259,232 +104,6 @@ export const PRICE_OFFENSIVE = {
   priceMult: 0.85,        // −15 % auf alle Verkaufspreise (Margen-Opfer)
   pressureMult: 0.5,      // klaut der Konkurrenz Marktanteil
 };
-
-// --- Ladengestaltung (Feature C) ------------------------------------------
-export type StoreTheme = "standard" | "budget" | "premium" | "family";
-interface ThemeMeta {
-  id: StoreTheme; emoji: string; name: string; tagline: string;
-  perks: string[]; tradeoff: string; demandMult: number; satBonus: number; floorTint: number;
-}
-export const STORE_THEMES: ThemeMeta[] = [
-  {
-    id: "standard", emoji: "🏪", name: "Standard",
-    tagline: "Dein Laden so, wie er ist.",
-    perks: ["Keine Umbaukosten", "Ausgewogene Basis"],
-    tradeoff: "Kein besonderer Vorteil.",
-    demandMult: 1.0, satBonus: 0, floorTint: 0xffffff,
-  },
-  {
-    id: "budget", emoji: "🏷️", name: "Schnäppchen-Markt",
-    tagline: "Nackte Regale, volle Einkaufswagen.",
-    perks: ["+8 % Kundenstrom", "Funktional & effizient"],
-    tradeoff: "−5 Zufriedenheit — kahle Optik schreckt Qualitätskunden ab.",
-    demandMult: 1.08, satBonus: -5, floorTint: 0xffe0b2,
-  },
-  {
-    id: "premium", emoji: "🌿", name: "Bio-Boutique",
-    tagline: "Wohliges Ambiente, treue Stammkunden.",
-    perks: ["+10 Zufriedenheit/Tag", "Kunden zahlen gerne mehr"],
-    tradeoff: "−6 % Kundenstrom — nicht jedermanns Geschmack.",
-    demandMult: 0.94, satBonus: 10, floorTint: 0xe8f5e9,
-  },
-  {
-    id: "family", emoji: "🛒", name: "Familien-Markt",
-    tagline: "Bunt, freundlich, für jeden was dabei.",
-    perks: ["+4 % Kundenstrom", "+4 Zufriedenheit/Tag"],
-    tradeoff: "Umbaukosten ohne Ausreißer-Bonus.",
-    demandMult: 1.04, satBonus: 4, floorTint: 0xe3f2fd,
-  },
-];
-export const THEME_SWITCH_COST = 2000;
-export function themeDemandMult(t: StoreTheme | null): number {
-  return STORE_THEMES.find((m) => m.id === t)?.demandMult ?? 1.0;
-}
-export function themeSatBonus(t: StoreTheme | null): number {
-  return STORE_THEMES.find((m) => m.id === t)?.satBonus ?? 0;
-}
-export function themeFloorTint(t: StoreTheme | null): number {
-  return STORE_THEMES.find((m) => m.id === t)?.floorTint ?? 0xffffff;
-}
-
-// --- Kreditlinie (Feature A) -----------------------------------------------
-export function creditLimit(branches: number): number {
-  return 5000 + branches * 3000;
-}
-export const CREDIT_INTEREST_RATE = 0.003; // 0,3 %/Tag auf geborgten Betrag
-
-// Kosten für die n-te Filiale (exponentiell steigend, auf 100 € gerundet).
-export function branchCost(n: number): number {
-  return Math.round((40000 * Math.pow(1.8, n)) / 100) * 100;
-}
-
-// Erzeugt ein Angebot für ein zufälliges Produkt (das noch keins hat).
-function rollOffer(active: Record<string, Offer>): [string, Offer] | null {
-  const frei = CATALOG.filter((p) => !active[p.id]);
-  if (!frei.length) return null;
-  const p = frei[Math.floor(Math.random() * frei.length)];
-  const rabatt = RABATTE[Math.floor(Math.random() * RABATTE.length)];
-  const daysLeft = 3 + Math.floor(Math.random() * 4); // 3–6 Tage
-  return [p.id, { rabatt, daysLeft }];
-}
-
-// --- Lieferantenpreise -------------------------------------------------------
-// Alle 3 Tage ändert sich der Preis jedes Lieferanten um ±0–15% (in 5%-Schritten).
-function rollSupplierMods(): Record<string, number> {
-  const steps = [-0.15, -0.10, -0.05, -0.05, 0, 0, 0.05, 0.05, 0.10, 0.15];
-  const mods: Record<string, number> = {};
-  for (const s of SUPPLIERS) {
-    mods[s.id] = 1 + steps[Math.floor(Math.random() * steps.length)];
-  }
-  return mods;
-}
-
-// --- Trend-Produkt -----------------------------------------------------------
-// Jeden Tag ein zufälliges verfügbares Produkt mit +30% Nachfrage.
-function rollTrendProduct(season: Season, seasonDay: number): string {
-  const wave = currentSeasonWave(seasonDay);
-  const available = CATALOG.filter(
-    (p) =>
-      (!p.onlyInSeason || p.onlyInSeason === season) &&
-      (!p.seasonWave || p.seasonWave === wave),
-  );
-  if (!available.length) return CATALOG[0].id;
-  return available[Math.floor(Math.random() * available.length)].id;
-}
-
-// --- Saison-Event ------------------------------------------------------------
-// Einmal pro Saison: Mega-Spike für ein zufälliges (saison-)passendes Produkt.
-// Trigger-Tag = 7–11 Tage nach Saison-Start; Vorankündigung 2 Tage früher per Mail.
-function makeSeasonEvent(firstDayOfSeason: number, season: Season): SeasonEvent {
-  const offset = 7 + Math.floor(Math.random() * 5); // Tag 7–11 innerhalb der Saison
-  const triggerDay = firstDayOfSeason + offset;
-  const candidates = CATALOG.filter(
-    (p) =>
-      !p.seasonWave && // Evergreens oder reguläre Produkte
-      (!p.onlyInSeason || p.onlyInSeason === season) &&
-      p.salesPerDay >= 10,
-  );
-  const p = candidates[Math.floor(Math.random() * candidates.length)] ?? CATALOG[0];
-  return { triggerDay, productId: p.id, notified: false };
-}
-
-// --- Lieferanten-Ausfall -----------------------------------------------------
-// 10% Chance je Tag, dass ein verfügbarer Lieferant 1–2 Tage ausfällt.
-function maybeSupplierOutage(
-  current: Record<string, number>,
-  day: number,
-): Record<string, number> | null {
-  const active = { ...current };
-  // Abgelaufene Ausfälle bereinigen.
-  for (const id of Object.keys(active)) {
-    if (active[id] < day) delete active[id];
-  }
-  if (Math.random() >= 0.1) return Object.keys(active).length ? active : null;
-  const free = SUPPLIERS.filter((s) => !active[s.id]);
-  if (free.length <= 1) return Object.keys(active).length ? active : null; // mindestens 1 frei lassen
-  const s = free[Math.floor(Math.random() * free.length)];
-  const duration = 1 + Math.floor(Math.random() * 2); // 1–2 Tage
-  active[s.id] = day + duration - 1; // letzter Tag des Ausfalls (inkl.)
-  // Mail schicken.
-  useMail.getState().receive({
-    from: "Lieferantenhotline",
-    subject: `⚠️ Lieferausfall: ${s.name}`,
-    body:
-      `Aufgrund eines internen Problems steht ${s.name} heute und ggf. morgen nicht zur Verfügung.\n\n` +
-      `Bitte weiche für diesen Zeitraum auf einen anderen Lieferanten aus.\n\n` +
-      `Wir entschuldigen uns für die Unannehmlichkeiten.`,
-    day,
-    kind: "info",
-  });
-  return active;
-}
-
-// --- Krise rollieren -----------------------------------------------------
-function rollCrisis(firstDayOfSeason: number, season: Season): SeasonCrisis {
-  const types: CrisisType[] = season === "Sommer"
-    ? ["hitzewelle", "preiskampf", "lieferskandal"]
-    : ["preiskampf", "lieferskandal"];
-  const type = types[Math.floor(Math.random() * types.length)];
-  const offset = 4 + Math.floor(Math.random() * 6); // Tag 4–9 der Saison
-  const triggerDay = firstDayOfSeason + offset;
-  const duration = type === "hitzewelle" ? 3 : 5 + Math.floor(Math.random() * 3);
-  const endDay = Math.min(triggerDay + duration - 1, firstDayOfSeason + 12);
-
-  const affectedProductIds = type === "preiskampf"
-    ? CATALOG
-        .filter((p) => p.storage === "trocken" && p.salesPerDay >= 10 && !p.onlyInSeason)
-        .sort(() => Math.random() - 0.5)
-        .slice(0, 3 + Math.floor(Math.random() * 3))
-        .map((p) => p.id)
-    : undefined;
-
-  const freeSup = SUPPLIERS.filter((s) => !s.requiresUpgrade);
-  const affectedSupplierId = type === "lieferskandal"
-    ? freeSup[Math.floor(Math.random() * freeSup.length)]?.id
-    : undefined;
-
-  return { type, triggerDay, endDay, announced: false, affectedProductIds, affectedSupplierId };
-}
-
-// --- Krisen-Ankündigungs-Mail ---------------------------------------------
-function sendCrisisAnnouncementMail(crisis: SeasonCrisis, day: number) {
-  const daysLeft = crisis.triggerDay - day; // Tage bis zur Krise
-  const duration = crisis.endDay - crisis.triggerDay + 1;
-  if (crisis.type === "hitzewelle") {
-    useMail.getState().receive({
-      from: "Wetterdienst",
-      subject: `☀️ Hitzewelle in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"} — Frischware gefährdet!`,
-      body:
-        `Eine außergewöhnliche Hitzewelle erwartet uns in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"}.\n\n` +
-        `Die hohen Temperaturen halbieren die Haltbarkeit aller Frischprodukte für ca. ${duration} Tage.\n\n` +
-        `Empfehlung: Reduziere deine Frischware-Bestände — oder riskiere deutlich erhöhten Verderb.\n\n` +
-        `Dauer: Tag ${crisis.triggerDay}–${crisis.endDay}.`,
-      day,
-      kind: "info",
-    });
-  } else if (crisis.type === "preiskampf") {
-    const names = (crisis.affectedProductIds ?? [])
-      .map((id) => CATALOG.find((p) => p.id === id)?.name ?? id)
-      .join(", ");
-    useMail.getState().receive({
-      from: "Marktforschung",
-      subject: `⚔️ Preiskampf von Sparfuchs in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"}!`,
-      body:
-        `Sparfuchs startet in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"} eine aggressive Preisaktion.\n\n` +
-        `Betroffene Produkte: ${names}.\n\n` +
-        `Die Nachfrage für diese Artikel sinkt bei uns für ca. ${duration} Tage um 25 %, ` +
-        `da Kunden zum Mitbewerber abwandern.\n\n` +
-        `Tipp: Bestellmengen für diese Produkte temporär reduzieren.\n\n` +
-        `Dauer: Tag ${crisis.triggerDay}–${crisis.endDay}.`,
-      day,
-      kind: "info",
-    });
-  } else {
-    const supName = SUPPLIERS.find((s) => s.id === crisis.affectedSupplierId)?.name ?? "Unbekannter Lieferant";
-    useMail.getState().receive({
-      from: "Verbrauchermagazin",
-      subject: `🚨 Lieferantenskandal: ${supName} in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"} gesperrt!`,
-      body:
-        `Achtung: Bei ${supName} wurde ein schwerwiegender Qualitätsskandal aufgedeckt.\n\n` +
-        `Der Lieferant wird ab Tag ${crisis.triggerDay} für ca. ${duration} Tage gesperrt ` +
-        `(bis Tag ${crisis.endDay}).\n\n` +
-        `Sichere dich jetzt mit Alternativlieferanten ab oder besorge ausreichend Vorrat, ` +
-        `um die Ausfallzeit zu überbrücken.`,
-      day,
-      kind: "info",
-    });
-  }
-}
-
-// --- Start-Angebote: 2 Stück.
-function seedOffers(): Record<string, Offer> {
-  const active: Record<string, Offer> = {};
-  for (let i = 0; i < 2; i++) {
-    const o = rollOffer(active);
-    if (o) active[o[0]] = o[1];
-  }
-  return active;
-}
 
 // --- Ausstehende Bestellungen (Lieferzeiten) --------------------------------
 // Waren, die bestellt aber noch nicht eingetroffen sind.
@@ -589,64 +208,56 @@ interface EconomyState {
 const byId = (id: string): Product =>
   CATALOG.find((p) => p.id === id) as Product;
 
-// Gesamtbestand eines Produkts = Summe aller Chargen.
-export function stockOf(batches: Record<string, Batch[]>, id: string): number {
-  return (batches[id] ?? []).reduce((sum, b) => sum + b.qty, 0);
-}
+// Der komplette "leere" Spielzustand (vor dem Start bzw. nach einem Reset).
+// Einzige Quelle für Initial-State/startGame/resetGame — neue State-Felder
+// müssen nur noch hier ergänzt werden, statt an mehreren Stellen synchron
+// gehalten zu werden.
+type FreshState = Omit<
+  EconomyState,
+  | "startGame" | "setFirmName" | "resetGame" | "closeWin" | "setSpecialization"
+  | "launchAdCampaign" | "launchPriceOffensive" | "takeCredit" | "repayCredit"
+  | "setStoreTheme" | "buy" | "upgrade" | "signContract" | "cancelContract"
+  | "setPrice" | "openBranch" | "advanceDay" | "closeRecap"
+>;
 
-// --- Lagerplatz & Ausbau --------------------------------------------------
-// Zwei getrennte Flächen: trockene Ware liegt im Lager, Frischware geht
-// direkt in die Verkaufsfläche (Kühlregal). Beide haben eine Kapazität in
-// Stück. Das ist die zweite strategische Grenze neben dem Budget.
-// Die Kapazität wächst durch Ausbau-Stufen (Reinvestition des Gewinns).
-export type StorageArea = "trocken" | "frisch";
-
-// Stufen, die der Spieler kaufen kann.
-export interface Upgrades {
-  lager: number;       // +4.000 Trockenware-Kapazität
-  flaeche: number;     // +1.000 Frischware-Kapazität
-  kassen: number;      // +15% Kundenstrom
-  kuehltheke: number;  // +1 Tag Haltbarkeit Frischware (max. 3)
-  marketing: number;   // +8% Kundenstrom-Multiplikator (max. 5)
-  personal: number;    // Mitarbeiter: −10% Verderb + Zufriedenheit (max. 3, Tageslohn)
-  lieferwagen: number; // einmalig: Großmarkt als 4. Lieferant (min. 200 Stk, −18%)
-  eigenmarke: number;  // einmalig: 3 Eigenmarken-Produkte freischalten
-}
-
-const emptyUpgrades = (): Upgrades => ({
-  lager: 0, flaeche: 0, kassen: 0,
-  kuehltheke: 0, marketing: 0, personal: 0, lieferwagen: 0, eigenmarke: 0,
-});
-
-// Basis-Kapazität (Stufe 0) + Zuwachs je Stufe.
-const BASE_CAP = { trocken: 10000, frisch: 2500 };
-const CAP_STEP = { trocken: 4000, frisch: 1000 };
-
-// Aktuelle Kapazität beider Flächen aus den Ausbaustufen.
-// Vollsortimenter-Spezialisierung gibt +30 % auf beide Flächen.
-export function capacityOf(u?: Upgrades): { trocken: number; frisch: number } {
-  const spec = useEconomy.getState?.()?.specialization ?? null;
-  const m = specCapMult(spec);
+function freshState(): FreshState {
   return {
-    trocken: Math.round((BASE_CAP.trocken + (u?.lager ?? 0) * CAP_STEP.trocken) * m),
-    frisch: Math.round((BASE_CAP.frisch + (u?.flaeche ?? 0) * CAP_STEP.frisch) * m),
+    started: false,
+    mode: null,
+    cash: 0,
+    day: 1,
+    batches: {},
+    stats: {},
+    offers: {},
+    upgrades: emptyUpgrades(),
+    lastRevenue: 0,
+    lastSpoiledValue: 0,
+    satisfaction: 80,
+    lastMissed: {},
+    recap: null,
+    recapOpen: false,
+    supplierMods: {},
+    trendProductId: null,
+    seasonEvent: null,
+    supplierOutage: {},
+    history: [],
+    demandedByProduct: {},
+    contracts: [],
+    pendingOrders: [],
+    firmName: "",
+    prices: {},
+    branches: 0,
+    seasonCrisis: null,
+    playMode: null,
+    missionId: null,
+    wonMission: false,
+    missionSeasonsCompleted: 0,
+    specialization: null,
+    adUntilDay: 0,
+    offensiveUntilDay: 0,
+    creditUsed: 0,
+    storeTheme: "standard" as StoreTheme,
   };
-}
-
-// Kundenstrom: Kassen (+15%/Stufe) × Marketing (+8%/Stufe) — beide multiplikativ.
-export function kundenstrom(u?: Upgrades): number {
-  return (1 + (u?.kassen ?? 0) * 0.15) * (1 + (u?.marketing ?? 0) * 0.08);
-}
-
-// Täglicher Lohn für alle angestellten Mitarbeiter.
-export function dailyWage(u?: Upgrades): number {
-  return (u?.personal ?? 0) * 60;
-}
-
-// Effektive Haltbarkeit eines Frischprodukts (inkl. Kühltheke-Bonus).
-export function effectiveShelfLife(p: Product, u?: Upgrades): number {
-  if (!p.shelfLifeDays) return 0;
-  return p.shelfLifeDays + (u?.kuehltheke ?? 0);
 }
 
 // Zufriedenheit wirkt mild auf die Nachfrage zurück: zufriedene Kunden bleiben,
@@ -747,118 +358,6 @@ export function projectDay(): {
   return { revenue: +revenue.toFixed(2), soldTrocken, soldFrisch };
 }
 
-// --- Ausbau-Linien (Meta + Kostenkurve) ----------------------------------
-export type UpgradeTrack =
-  | "lager" | "flaeche" | "kassen"
-  | "kuehltheke" | "marketing" | "personal"
-  | "lieferwagen" | "eigenmarke";
-
-export const UPGRADE_META: Record<
-  UpgradeTrack,
-  { name: string; icon: string; desc: string; baseCost: number; growth: number; maxLevel?: number }
-> = {
-  lager: {
-    name: "Lager vergrößern",
-    icon: "📦",
-    desc: "+4.000 Plätze für Trockenware.",
-    baseCost: 2500,
-    growth: 1.6,
-  },
-  flaeche: {
-    name: "Verkaufsfläche vergrößern",
-    icon: "🧊",
-    desc: "+1.000 Plätze für Frischware.",
-    baseCost: 2000,
-    growth: 1.6,
-  },
-  kassen: {
-    name: "Kasse aufstellen",
-    icon: "🛒",
-    desc: "+15 % Kundenstrom (mehr Verkäufe/Tag).",
-    baseCost: 3000,
-    growth: 1.8,
-  },
-  kuehltheke: {
-    name: "Kühltheke ausbauen",
-    icon: "🌡️",
-    desc: "+1 Tag Haltbarkeit für alle Frischprodukte.",
-    baseCost: 3500,
-    growth: 1.7,
-    maxLevel: 3,
-  },
-  marketing: {
-    name: "Marketing & Werbung",
-    icon: "📣",
-    desc: "+8 % Kundenstrom — mehr Laufkundschaft (stapelt mit Kassen).",
-    baseCost: 4000,
-    growth: 1.9,
-    maxLevel: 5,
-  },
-  personal: {
-    name: "Mitarbeiter einstellen",
-    icon: "👷",
-    desc: "−10 % Verderb + Zufriedenheitsbonus. Kostet 60 €/Tag pro Mitarbeiter.",
-    baseCost: 5000,
-    growth: 1.5,
-    maxLevel: 3,
-  },
-  lieferwagen: {
-    name: "Eigener Lieferwagen",
-    icon: "🚐",
-    desc: "Schaltet Eigenen Großmarkt als 4. Lieferanten frei (−18 %, Mindestmenge 200 Stk).",
-    baseCost: 8000,
-    growth: 1,
-    maxLevel: 1,
-  },
-  eigenmarke: {
-    name: "Eigenmarken-Regal",
-    icon: "🏷️",
-    desc: "Schaltet 3 Eigenmarken-Produkte mit besserer Marge frei (Cola, Wasser, Mehl).",
-    baseCost: 6000,
-    growth: 1,
-    maxLevel: 1,
-  },
-};
-
-// Kosten für die nächste Stufe einer Ausbau-Linie (steigend, auf 10 € gerundet).
-export function upgradeCost(track: UpgradeTrack, level: number): number {
-  const m = UPGRADE_META[track];
-  return Math.round((m.baseCost * Math.pow(m.growth, level)) / 10) * 10;
-}
-
-// Belegung beider Flächen aus den aktuellen Chargen.
-export function usedCapacity(batches: Record<string, Batch[]>): {
-  trocken: number;
-  frisch: number;
-} {
-  let trocken = 0;
-  let frisch = 0;
-  for (const p of CATALOG) {
-    const s = stockOf(batches, p.id);
-    if (p.storage === "frisch") frisch += s;
-    else trocken += s;
-  }
-  return { trocken, frisch };
-}
-
-// Mail-Text für ein neues Lieferanten-Angebot.
-function offerMail(productId: string, o: Offer, day: number) {
-  const p = byId(productId);
-  const lief = SUPPLIERS.find((s) => s.id === cheapestSupplier(p)) ?? SUPPLIERS[0];
-  useMail.getState().receive({
-    from: lief.name,
-    subject: `Sonderaktion: ${p.name} −${Math.round(o.rabatt * 100)} %`,
-    body:
-      `Sehr geehrter Einkäufer,\n\nfür kurze Zeit bieten wir Ihnen ${p.name} ` +
-      `mit ${Math.round(o.rabatt * 100)} % Rabatt auf den Einkaufspreis an. ` +
-      `Das Angebot gilt noch ${o.daysLeft} Tage.\n\n` +
-      `Jetzt zugreifen lohnt sich — gute Marge bei voller Drehzahl.\n\n` +
-      `Mit freundlichen Grüßen\n${lief.name}`,
-    day,
-    kind: "angebot",
-  });
-}
-
 // Textbausteine für Kundenstimmen.
 const VOICE = {
   empty: (n: string) => `„Schade, ${n} war heute leer!“`,
@@ -907,44 +406,132 @@ function computeSatisfaction(args: {
   return { satisfaction, voices: voices.slice(0, 3) };
 }
 
+// Ergebnis eines Verkaufs-/Verderb-Durchlaufs für alle Produkte (ein Tag).
+interface SalesResult {
+  batches: Record<string, Batch[]>;
+  stats: Record<string, ProductStat>;
+  demandedByProduct: Record<string, number>;
+  revenue: number;
+  spoiledValue: number;
+  unitsSold: number;
+  unitsFresh: number;
+  bestseller: { name: string; qty: number } | null;
+  demandedTotal: number;
+  missedByProduct: Record<string, number>;
+}
+
+// Verkauft pro Produkt nach Nachfrage (FIFO über die Chargen) und lässt
+// Frischware verderben, deren Haltbarkeit erreicht ist. Bewusst nicht in ein
+// eigenes Modul ausgelagert: `effectiveSales` hängt am globalen Store
+// (useEconomy.getState()), ein Auslagern würde einen zirkulären Import
+// erzeugen (siehe Hinweis bei `capacityOf`/`upgrades.ts`).
+function runSalesAndSpoilage(args: {
+  batches: Record<string, Batch[]>;
+  stats: Record<string, ProductStat>;
+  demandedByProduct: Record<string, number>;
+  upgrades: Upgrades;
+  satisfaction: number;
+  season: Season;
+  seasonDay: number;
+  seasonCrisis: SeasonCrisis | null;
+  day: number;
+  prices: Record<string, number>;
+  sellMult: number;
+  competitorPressure: number;
+}): SalesResult {
+  const {
+    batches, stats, demandedByProduct, upgrades, satisfaction, season, seasonDay,
+    seasonCrisis, day, prices, sellMult, competitorPressure,
+  } = args;
+
+  const newBatches: Record<string, Batch[]> = {};
+  const newStats: Record<string, ProductStat> = { ...stats };
+  const newDemandedByProduct: Record<string, number> = { ...demandedByProduct };
+  let revenue = 0;
+  let spoiledValue = 0;
+  let unitsSold = 0;
+  let unitsFresh = 0; // für Ziel "units_fresh"
+  let best: { name: string; qty: number } | null = null;
+  let demandedTotal = 0;
+  const missedByProduct: Record<string, number> = {};
+
+  for (const p of CATALOG) {
+    let list = (batches[p.id] ?? []).map((b) => ({ ...b }));
+    const stat = { ...(newStats[p.id] ?? emptyStat()) };
+
+    // 1) Verkauf nach Nachfrage (inkl. Saison, Welle, Trend, Event), FIFO.
+    let soldThis = 0;
+    const demand = Math.floor(
+      effectiveSales(p, upgrades, satisfaction, season, seasonDay) * (1 - competitorPressure),
+    );
+    const stock = list.reduce((s, b) => s + b.qty, 0);
+    demandedTotal += demand;
+    newDemandedByProduct[p.id] = (newDemandedByProduct[p.id] ?? 0) + demand;
+    if (demand > stock) missedByProduct[p.id] = demand - stock;
+    let toSell = Math.min(demand, stock);
+    for (const b of list) {
+      if (toSell <= 0) break;
+      const take = Math.min(b.qty, toSell);
+      b.qty -= take;
+      toSell -= take;
+      soldThis += take;
+      revenue += take * (prices[p.id] ?? p.vk) * sellMult;
+      stat.sold += take;
+      stat.revenue += take * p.vk;
+      stat.ageSum += take * b.age; // Alter beim Verkauf -> Ø Lagerdauer
+    }
+    unitsSold += soldThis;
+    if (p.storage === "frisch") unitsFresh += soldThis;
+    if (soldThis > 0 && (!best || soldThis > best.qty))
+      best = { name: p.name, qty: soldThis };
+    list = list.filter((b) => b.qty > 0);
+
+    // 2) Chargen altern.
+    for (const b of list) b.age += 1;
+
+    // 3) Verderb: nur Frischware, deren effektive Haltbarkeit (inkl. Kühltheke) erreicht.
+    if (p.storage === "frisch" && p.shelfLifeDays) {
+      const baseShelf = effectiveShelfLife(p, upgrades);
+      // Hitzewelle halbiert die Haltbarkeit aller Frischprodukte
+      const hitzeFactor = isCrisisActive(seasonCrisis, day) && seasonCrisis?.type === "hitzewelle" ? 0.5 : 1.0;
+      const shelf = Math.max(1, Math.floor(baseShelf * hitzeFactor));
+      const personalFactor = 1 - (upgrades.personal ?? 0) * 0.10;
+      const survivors: Batch[] = [];
+      for (const b of list) {
+        if (b.age >= shelf) {
+          // Mitarbeiter retten einen Teil der verderbenden Ware (bessere Rotation).
+          const actualSpoiled = Math.ceil(b.qty * personalFactor);
+          stat.spoiled += actualSpoiled;
+          spoiledValue += actualSpoiled * p.ek;
+        } else {
+          survivors.push(b);
+        }
+      }
+      list = survivors;
+    }
+
+    newBatches[p.id] = list;
+    newStats[p.id] = stat;
+  }
+
+  return {
+    batches: newBatches,
+    stats: newStats,
+    demandedByProduct: newDemandedByProduct,
+    revenue,
+    spoiledValue,
+    unitsSold,
+    unitsFresh,
+    bestseller: best,
+    demandedTotal,
+    missedByProduct,
+  };
+}
+
 export const useEconomy = create<EconomyState>()(
   persist(
     (set, get) => ({
-      started: false,
-      mode: null,
-      cash: 0,
-      day: 1,
-      batches: {},
-      stats: {},
-      offers: {},
-      upgrades: emptyUpgrades(),
-      lastRevenue: 0,
-      lastSpoiledValue: 0,
-      satisfaction: 80,
-      lastMissed: {},
-      recap: null,
-      recapOpen: false,
-      supplierMods: {},
-      trendProductId: null,
-      seasonEvent: null,
-      supplierOutage: {},
-      history: [],
-      demandedByProduct: {},
-      contracts: [],
-      pendingOrders: [],
-      firmName: "",
-      prices: {},
-      branches: 0,
-      seasonCrisis: null,
-      playMode: null,
-      missionId: null,
-      wonMission: false,
-      missionSeasonsCompleted: 0,
-      specialization: null,
-      adUntilDay: 0,
-      offensiveUntilDay: 0,
-      creditUsed: 0,
-      storeTheme: "standard" as StoreTheme,
+      ...freshState(),
 
       startGame: (id, name, playMode = "endlos", missionId) => {
         const missionDef = missionId ? MISSIONS.find((m) => m.id === missionId) : null;
@@ -954,41 +541,17 @@ export const useEconomy = create<EconomyState>()(
         const firm = name?.trim() || "Mein Supermarkt";
         const offers = seedOffers();
         set({
+          ...freshState(),
           started: true,
           mode: id,
           firmName: firm,
           cash: budget,
-          day: 1,
-          batches: {},
-          stats: {},
           offers,
-          upgrades: emptyUpgrades(),
-          lastRevenue: 0,
-          lastSpoiledValue: 0,
-          satisfaction: 80,
-          lastMissed: {},
-          recap: null,
-          recapOpen: false,
           supplierMods: rollSupplierMods(),
           trendProductId: rollTrendProduct("Frühling", 1),
           seasonEvent: makeSeasonEvent(1, "Frühling"),
-          supplierOutage: {},
-          history: [],
-          demandedByProduct: {},
-          contracts: [],
-          pendingOrders: [],
-          prices: {},
-          branches: 0,
-          seasonCrisis: null,
           playMode: playMode ?? "endlos",
           missionId: missionId ?? null,
-          wonMission: false,
-          missionSeasonsCompleted: 0,
-          specialization: null,
-          adUntilDay: 0,
-          offensiveUntilDay: 0,
-          creditUsed: 0,
-          storeTheme: "standard" as StoreTheme,
         });
 
         // Konkurrenten zurücksetzen.
@@ -1019,43 +582,7 @@ export const useEconomy = create<EconomyState>()(
         useGoal.getState().reset();
         useMail.getState().clearAll();
         useCompetitor.getState().resetCompetitors();
-        set({
-          started: false,
-          mode: null,
-          firmName: "",
-          cash: 0,
-          day: 1,
-          batches: {},
-          stats: {},
-          offers: {},
-          upgrades: emptyUpgrades(),
-          lastRevenue: 0,
-          lastSpoiledValue: 0,
-          satisfaction: 80,
-          lastMissed: {},
-          recap: null,
-          recapOpen: false,
-          supplierMods: {},
-          trendProductId: null,
-          seasonEvent: null,
-          supplierOutage: {},
-          history: [],
-          demandedByProduct: {},
-          contracts: [],
-          pendingOrders: [],
-          prices: {},
-          branches: 0,
-          seasonCrisis: null,
-          playMode: null,
-          missionId: null,
-          wonMission: false,
-          missionSeasonsCompleted: 0,
-          specialization: null,
-          adUntilDay: 0,
-          offensiveUntilDay: 0,
-          creditUsed: 0,
-          storeTheme: "standard" as StoreTheme,
-        });
+        set(freshState());
       },
 
       closeWin: () => set({ wonMission: false, missionId: null, playMode: "endlos" }),
@@ -1128,7 +655,7 @@ export const useEconomy = create<EconomyState>()(
         if (qty <= 0) return { ok: false, msg: "Menge muss größer als 0 sein." };
         const p = byId(productId);
         if (!p) return { ok: false, msg: "Produkt unbekannt." };
-        const { cash, batches, offers, day, upgrades, supplierMods, supplierOutage, contracts, pendingOrders } = get();
+        const { cash, batches, offers, day, upgrades, supplierMods, supplierOutage, contracts, pendingOrders, specialization } = get();
         // Eigenmarken: nur kaufen wenn Upgrade aktiv.
         if (p.requiresUpgrade === "eigenmarke" && (upgrades.eigenmarke ?? 0) < 1) {
           return { ok: false, msg: "Eigenmarken-Regal noch nicht freigeschaltet." };
@@ -1157,7 +684,7 @@ export const useEconomy = create<EconomyState>()(
         // Lagerplatz prüfen: Bestand + ausstehende Bestellungen + neue Menge ≤ Kapazität.
         const used = usedCapacity(batches);
         const pend = pendingCapOf(pendingOrders);
-        const cap = capacityOf(upgrades);
+        const cap = capacityOf(upgrades, specialization);
         const area: StorageArea = p.storage === "frisch" ? "frisch" : "trocken";
         const frei = cap[area] - used[area] - pend[area];
         if (qty > frei) {
@@ -1340,194 +867,23 @@ export const useEconomy = create<EconomyState>()(
           batches[o.productId] = list;
         }
         const remainingPending = pendingOrders.filter((o) => o.arrivalDay !== day);
-        const newBatches: Record<string, Batch[]> = {};
-        const newStats: Record<string, ProductStat> = { ...stats };
-        const newDemandedByProduct: Record<string, number> = { ...demandedByProduct };
-        let revenue = 0;
-        let spoiledValue = 0;
-        let unitsSold = 0;
-        let unitsFresh = 0; // für Ziel "units_fresh"
-        let best: { name: string; qty: number } | null = null;
-        let demandedTotal = 0;
-        const missedByProduct: Record<string, number> = {};
 
-        for (const p of CATALOG) {
-          let list = (batches[p.id] ?? []).map((b) => ({ ...b }));
-          const stat = { ...(newStats[p.id] ?? emptyStat()) };
+        const {
+          batches: newBatches, stats: newStats, demandedByProduct: newDemandedByProduct,
+          revenue, spoiledValue, unitsSold, unitsFresh, bestseller: best, demandedTotal, missedByProduct,
+        } = runSalesAndSpoilage({
+          batches, stats, demandedByProduct, upgrades, satisfaction, season, seasonDay,
+          seasonCrisis, day, prices, sellMult, competitorPressure,
+        });
 
-          // 1) Verkauf nach Nachfrage (inkl. Saison, Welle, Trend, Event), FIFO.
-          let soldThis = 0;
-          const demand = Math.floor(
-            effectiveSales(p, upgrades, satisfaction, season, seasonDay) * (1 - competitorPressure),
-          );
-          const stock = list.reduce((s, b) => s + b.qty, 0);
-          demandedTotal += demand;
-          newDemandedByProduct[p.id] = (newDemandedByProduct[p.id] ?? 0) + demand;
-          if (demand > stock) missedByProduct[p.id] = demand - stock;
-          let toSell = Math.min(demand, stock);
-          for (const b of list) {
-            if (toSell <= 0) break;
-            const take = Math.min(b.qty, toSell);
-            b.qty -= take;
-            toSell -= take;
-            soldThis += take;
-            revenue += take * (prices[p.id] ?? p.vk) * sellMult;
-            stat.sold += take;
-            stat.revenue += take * p.vk;
-            stat.ageSum += take * b.age; // Alter beim Verkauf -> Ø Lagerdauer
-          }
-          unitsSold += soldThis;
-          if (p.storage === "frisch") unitsFresh += soldThis;
-          if (soldThis > 0 && (!best || soldThis > best.qty))
-            best = { name: p.name, qty: soldThis };
-          list = list.filter((b) => b.qty > 0);
-
-          // 2) Chargen altern.
-          for (const b of list) b.age += 1;
-
-          // 3) Verderb: nur Frischware, deren effektive Haltbarkeit (inkl. Kühltheke) erreicht.
-          if (p.storage === "frisch" && p.shelfLifeDays) {
-            const baseShelf = effectiveShelfLife(p, upgrades);
-            // Hitzewelle halbiert die Haltbarkeit aller Frischprodukte
-            const hitzeFactor = isCrisisActive(seasonCrisis, day) && seasonCrisis?.type === "hitzewelle" ? 0.5 : 1.0;
-            const shelf = Math.max(1, Math.floor(baseShelf * hitzeFactor));
-            const personalFactor = 1 - (upgrades.personal ?? 0) * 0.10;
-            const survivors: Batch[] = [];
-            for (const b of list) {
-              if (b.age >= shelf) {
-                // Mitarbeiter retten einen Teil der verderbenden Ware (bessere Rotation).
-                const actualSpoiled = Math.ceil(b.qty * personalFactor);
-                stat.spoiled += actualSpoiled;
-                spoiledValue += actualSpoiled * p.ek;
-              } else {
-                survivors.push(b);
-              }
-            }
-            list = survivors;
-          }
-
-          newBatches[p.id] = list;
-          newStats[p.id] = stat;
-        }
-
-        // Angebote altern lassen, abgelaufene entfernen, ggf. neues dazu.
-        const newOffers: Record<string, Offer> = {};
-        for (const [id, o] of Object.entries(offers)) {
-          if (o.daysLeft - 1 > 0) newOffers[id] = { ...o, daysLeft: o.daysLeft - 1 };
-        }
-        if (Object.keys(newOffers).length < 3 && Math.random() < 0.5) {
-          const o = rollOffer(newOffers);
-          if (o) {
-            newOffers[o[0]] = o[1];
-            offerMail(o[0], o[1], day + 1); // Lieferant meldet sich per Mail
-          }
-        }
-
-        // --- Saison-Wechsel-Logik -----------------------------------------------
-        const nextCal = dayToCalendar(day + 1);
-        const SEASON_EMOJI: Record<string, string> = {
-          Frühling: "🌸", Sommer: "☀️", Herbst: "🍂", Winter: "❄️",
-        };
-        let newSeasonEvent = seasonEvent;
-
-        if (nextCal.season !== season) {
-          // Neue Saison: Mail + neues Saison-Event anlegen.
-          const evergreens = CATALOG.filter((p) => p.onlyInSeason === nextCal.season && !p.seasonWave);
-          const wave1 = CATALOG.filter((p) => p.onlyInSeason === nextCal.season && p.seasonWave === 1);
-          const everText = evergreens.length ? `Dauerhaft: ${evergreens.map((p) => p.name).join(", ")}.` : "";
-          const w1Text = wave1.length ? `\nAktionswelle 1 (Tage 1–5): ${wave1.map((p) => p.name).join(", ")}.` : "";
-          useMail.getState().receive({
-            from: "Zentrale",
-            subject: `${SEASON_EMOJI[nextCal.season]} ${nextCal.season} beginnt — Q${nextCal.quarter}`,
-            body:
-              `Ab morgen (Tag ${day + 1}) beginnt ${nextCal.season}!\n\n` +
-              `Das Kaufverhalten deiner Kunden ändert sich — passe deine Bestellmengen an.\n\n` +
-              `${everText}${w1Text}\n\nViel Erfolg im ${nextCal.season}!`,
-            day: day + 1,
-            kind: "info",
-          });
-          newSeasonEvent = makeSeasonEvent(day + 1, nextCal.season);
-        }
-
-        // Aktionswellen-Wechsel innerhalb der Saison.
-        if (nextCal.season === season) {
-          const curWave = currentSeasonWave(seasonDay);
-          const nextWave = currentSeasonWave(nextCal.seasonDay);
-          if (nextWave !== curWave) {
-            const waveProducts = CATALOG.filter(
-              (p) => p.onlyInSeason === season && p.seasonWave === nextWave,
-            );
-            if (waveProducts.length) {
-              useMail.getState().receive({
-                from: "Zentrale",
-                subject: `${SEASON_EMOJI[season]} Aktionswelle ${nextWave} startet morgen`,
-                body:
-                  `Morgen startet Aktionswelle ${nextWave} im ${season}!\n\n` +
-                  `Neu im Sortiment: ${waveProducts.map((p) => p.name).join(", ")}.\n\n` +
-                  `Bestelle rechtzeitig!`,
-                day: day + 1,
-                kind: "info",
-              });
-            }
-          }
-        }
-
-        // Jahreswechsel.
-        if (nextCal.year !== dayToCalendar(day).year) {
-          useMail.getState().receive({
-            from: "Zentrale",
-            subject: `🎉 Jahr ${nextCal.year} beginnt`,
-            body:
-              `Herzlichen Glückwunsch — du hast dein erstes Jahr erfolgreich abgeschlossen!\n\n` +
-              `Jahr ${nextCal.year} startet. Weiter so!`,
-            day: day + 1,
-            kind: "info",
-          });
-        }
-
-        // --- Saison-Event: Vorankündigung 2 Tage vorher -----------------------
-        let notifiedEvent = newSeasonEvent;
-        if (newSeasonEvent && !newSeasonEvent.notified && day + 1 === newSeasonEvent.triggerDay - 1) {
-          const ep = byId(newSeasonEvent.productId);
-          useMail.getState().receive({
-            from: "Marktforschung",
-            subject: `📊 Trend-Alert: ${ep.name} übermorgen!`,
-            body:
-              `Unsere Analyse zeigt: In 2 Tagen ist mit einer massiven Nachfragespitze ` +
-              `bei ${ep.name} zu rechnen.\n\nSorge jetzt für ausreichend Vorrat — ` +
-              `wer gut bestückt ist, kann an diesem Tag besonders gut verdienen!`,
-            day: day + 1,
-            kind: "info",
-          });
-          notifiedEvent = { ...newSeasonEvent, notified: true };
-        }
-
-        // --- Krisen-Logik ------------------------------------------------
-        // Abgelaufene Krise bereinigen; bei Saisonwechsel neue rollen.
-        let newSeasonCrisis: SeasonCrisis | null = day >= (seasonCrisis?.endDay ?? -1) ? null : seasonCrisis;
-        if (nextCal.season !== season) {
-          newSeasonCrisis = Math.random() < 0.7 ? rollCrisis(day + 1, nextCal.season) : null;
-        }
-        // Vorankündigung 1 Tag vorher senden (Mail erscheint morgen, Trigger übermorgen)
-        if (newSeasonCrisis && !newSeasonCrisis.announced && day + 1 === newSeasonCrisis.triggerDay - 1) {
-          sendCrisisAnnouncementMail(newSeasonCrisis, day + 1);
-          newSeasonCrisis = { ...newSeasonCrisis, announced: true };
-        }
-
-        // --- Neue Lieferantenpreise (alle 3 Tage) ----------------------------
-        const newSupplierMods = (day + 1) % 3 === 1 ? rollSupplierMods() : supplierMods;
-
-        // --- Trend-Produkt für morgen rollen ---------------------------------
-        const newTrend = rollTrendProduct(nextCal.season, nextCal.seasonDay);
-
-        // --- Lieferanten-Ausfall ---------------------------------------------
-        const newOutage = maybeSupplierOutage(supplierOutage, day + 1) ?? {};
-        // Lieferskandal: Lieferant für die gesamte Krisen-Dauer sperren
-        if (newSeasonCrisis?.type === "lieferskandal" &&
-            day + 1 === newSeasonCrisis.triggerDay &&
-            newSeasonCrisis.affectedSupplierId) {
-          newOutage[newSeasonCrisis.affectedSupplierId] = newSeasonCrisis.endDay;
-        }
+        // Angebote, Saison-/Wellen-/Jahreswechsel (+ Mails), Krisen, Lieferanten-
+        // preise, Trend-Produkt und -Ausfälle für morgen auswürfeln.
+        const {
+          offers: newOffers, nextCal, seasonEvent: notifiedEvent, seasonCrisis: newSeasonCrisis,
+          supplierMods: newSupplierMods, trendProductId: newTrend, supplierOutage: newOutage,
+        } = rotateDailyMarket({
+          day, season, seasonDay, offers, seasonEvent, seasonCrisis, supplierMods, supplierOutage,
+        });
 
         // --- Ziel-Fortschritt für heute aktualisieren --------------------
         const goalDailyBonus = useGoal.getState().updateProgress({
@@ -1539,27 +895,11 @@ export const useEconomy = create<EconomyState>()(
           demandedTotal,
         });
 
-        // Tageslohn abziehen und per Mail warnen wenn Konto kritisch.
-        const wage = dailyWage(upgrades);
-        // Passiveinkommen aus Filialen: 12 % des gestrigen Tagesumsatzes pro Filiale.
-        const branchIncome = +(branches * 0.12 * lastRevenue).toFixed(2);
-        // Kredit-Zinsen: 0,3 %/Tag auf geborgten Betrag.
-        const creditUsed = get().creditUsed;
-        const creditInterest = +(creditUsed * CREDIT_INTEREST_RATE).toFixed(2);
-        const cashAfterSales = +(cash + revenue + goalDailyBonus + branchIncome).toFixed(2);
-        const cashAfter = +(cashAfterSales - wage - creditInterest).toFixed(2);
-        if (wage > 0 && cashAfter < 500) {
-          useMail.getState().receive({
-            from: "Buchhaltung",
-            subject: "⚠️ Kontostand kritisch nach Lohnzahlung",
-            body:
-              `Heute wurden ${euro(wage)} Tageslohn für ${upgrades.personal} Mitarbeiter abgezogen.\n\n` +
-              `Dein Kontostand beträgt jetzt nur noch ${euro(cashAfter)}.\n\n` +
-              `Sorge für ausreichend Einnahmen — oder erwäge, Personal zu reduzieren.`,
-            day: day + 1,
-            kind: "info",
-          });
-        }
+        // Tageslohn, Filial-Passiveinkommen und Kredit-Zinsen verrechnen.
+        const { branchIncome, cashAfter } = settleDayFinance({
+          cash, revenue, goalDailyBonus, branches, lastRevenue,
+          creditUsed: get().creditUsed, upgrades, nextDay: day + 1,
+        });
 
         // Tages-Datensatz für die Historie (max. 52 Einträge behalten).
         const todayRecord: DayRecord = {

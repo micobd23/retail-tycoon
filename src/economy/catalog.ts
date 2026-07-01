@@ -378,3 +378,17 @@ export interface DayRecord {
   satisfaction: number;
   cash: number;
 }
+
+// Eine Charge: beim Einkauf entsteht ein "Posten" mit Menge und Alter (Tage).
+// Frischware verdirbt, wenn das Alter die Haltbarkeit erreicht.
+// Liegt hier (statt in economyStore.ts), damit auch andere Module wie
+// upgrades.ts sie nutzen können, ohne einen zirkulären Import zu erzeugen.
+export interface Batch {
+  qty: number;
+  age: number; // Tage im Bestand
+}
+
+// Gesamtbestand eines Produkts = Summe aller Chargen.
+export function stockOf(batches: Record<string, Batch[]>, id: string): number {
+  return (batches[id] ?? []).reduce((sum, b) => sum + b.qty, 0);
+}
